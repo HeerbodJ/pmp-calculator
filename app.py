@@ -15,19 +15,25 @@ import os
 @st.cache_resource
 def download_and_extract_data():
     data_dir = "pmp_data"
+    
+    # Check if we already downloaded the data to prevent re-downloading
     if not os.path.exists(data_dir):
         st.info("First-time setup: Downloading data from Google Drive (this takes a minute)...")
-        # Replace with your actual Google Drive File ID
-        file_id = 'YOUR_GOOGLE_DRIVE_FILE_ID_HERE' 
-        url = f'https://drive.google.com/uc?id={file_id}'
         
+        # Your exact Google Drive File ID
+        file_id = '1r9mZGQcSGZ_iCdrV3tAbDdOY_Hueej5t'
         output_zip = 'pmp_data.zip'
-        gdown.download(url, output_zip, quiet=False)
         
+        # gdown downloads the heavy file using just the ID
+        gdown.download(id=file_id, output=output_zip, quiet=False)
+        
+        # Extract the ZIP folder onto the server
         with zipfile.ZipFile(output_zip, 'r') as zip_ref:
             zip_ref.extractall(".")
             
+        # Clean up the zip file to save server space
         os.remove(output_zip)
+        
     return True
 
 # Trigger the download
