@@ -21,10 +21,10 @@ def download_and_extract_data():
         file_id = '1r9mZGQcSGZ_iCdrV3tAbDdOY_Hueej5t'
         output_zip = 'pmp_data.zip'
         
-        gdown.download(id=file_id, output=output_zip, quiet=False)
+        # fuzzy=True bypasses Google Drive's virus scan warning on large files
+        gdown.download(id=file_id, output=output_zip, quiet=False, fuzzy=True)
         
         with zipfile.ZipFile(output_zip, 'r') as zip_ref:
-            # Extract to a controlled folder so paths remain stable
             zip_ref.extractall(data_dir)
             
         os.remove(output_zip)
@@ -32,21 +32,38 @@ def download_and_extract_data():
 
 download_and_extract_data()
 
-# --- 2. CONFIGURATION PATHS ---
+# --- 2. DYNAMIC CONFIGURATION PATHS ---
 DATA_ROOT = Path("pmp_data")
-# Handle nested folder structure if the zip created pmp_data/pmp_data/
-if (DATA_ROOT / "pmp_data").exists():
-    DATA_ROOT = DATA_ROOT / "pmp_data"
 
-LOCAL_GEOFABRIC_DB = str(DATA_ROOT / "SH_Catchments_GDB_V3_3/SH_Catchments_GDB")
-MASTER_PMP_ZONES_SHP = str(DATA_ROOT / "GTSMR_CD_2005/pmp_zones/zones_all.shp")
-GSAM_CD_ROOT = str(DATA_ROOT / "GSAM_CD_Oct_06")
-GSAM_MAF_GRID = str(DATA_ROOT / "GSAM_CD_Oct_06/gridded_data/epw_annual.asc/epw_annual.asc")
-GSAM_TOPO_GRID = str(DATA_ROOT / "GSAM_CD_Oct_06/gridded_data/gsam_taf.asc/gsam_taf.asc")
+def find_file(filename):
+    for p in DATA_ROOT.rglob('*'):
+        # Ignores hidden macOS zip artifacts if they exist
+        if "__MACOSX" not in p.parts and p.is_file() and p.name.lower() == filename.lower():
+            return str(p)
+    return ""
+
+def find_dir_starts_with(dirname):
+    for p in DATA_ROOT.rglob('*'):
+        if "__MACOSX" not in p.parts and p.is_dir() and p.name.lower().startswith(dirname.lower()):
+            return str(p)
+    return ""
+
+def find_gdb():
+    for p in DATA_ROOT.rglob('*'):
+        if "__MACOSX" not in p.parts and p.is_dir() and p.name.lower() in ["sh_catchments_gdb", "sh_catchments.gdb", "sh_catchments_gdb.gdb"]:
+            return str(p)
+    return ""
+
+# The app now hunts for the files itself instead of relying on hardcoded paths
+LOCAL_GEOFABRIC_DB = find_gdb()
+MASTER_PMP_ZONES_SHP = find_file("zones_all.shp")
+GSAM_CD_ROOT = find_dir_starts_with("gsam_cd")
+GSAM_MAF_GRID = find_file("epw_annual.asc")
+GSAM_TOPO_GRID = find_file("gsam_taf.asc")
 GSAM_STANDARD_EPW = 56.7
 
-GTSMR_CD_ROOT = str(DATA_ROOT / "GTSMR_CD_2005")
-GTSMR_MAF_GRID = str(DATA_ROOT / "GTSMR_CD_2005/gridded_data/epw_annual.asc/yearly005pwm.asc")
+GTSMR_CD_ROOT = find_dir_starts_with("gtsmr_cd")
+GTSMR_MAF_GRID = find_file("yearly005pwm.asc")
 GTSMR_TOPO_GRID = None  
 GTSMR_STANDARD_EPW = 73.0
 
@@ -90,13 +107,13 @@ def fetch_catchment_from_geofabric(catchment_input):
     params = {'where': f"SegmentNo={catchment_id}", 'outFields': '*', 'returnGeometry': 'true', 'f': 'geojson'}
     
     try:
-        response = requests.get(base_url, params=params, headers=headers, timeout=15)
+        response = requests.get(base_url, params=params, headers=headers, timeout=10)
         response.raise_for_status()
         data = response.json()
         
         if "error" in data or "features" not in data or len(data["features"]) == 0:
             params['where'] = f"HydroID={catchment_id}"
-            response = requests.get(base_url, params=params, headers=headers, timeout=15)
+            response = requests.get(base_url, params=params, headers=headers, timeout=10)
             data = response.json()
             if "error" in data or "features" not in data or len(data["features"]) == 0:
                 raise ValueError(f"Could not find catchment ID {catchment_id} in Geofabric API.")
@@ -106,16 +123,16 @@ def fetch_catchment_from_geofabric(catchment_input):
         return catchment
         
     except Exception:
-        # Offline Fallback
-        if not Path(LOCAL_GEOFABRIC_DB).exists():
-            raise FileNotFoundError("API failed and offline database not found. Please try again later.")
+        # Offline Fallback (This will trigger 99% of the time on Streamlit Cloud)
+        if not LOCAL_GEOFABRIC_DB or not Path(LOCAL_GEOFABRIC_DB).exists():
+            raise FileNotFoundError("BoM API is blocked, and the offline database could not be found. Check System Diagnostics.")
             
         catchment = gpd.read_file(LOCAL_GEOFABRIC_DB, layer='AHGFCatchment', where=f"SegmentNo={catchment_id}")
         if catchment.empty:
             catchment = gpd.read_file(LOCAL_GEOFABRIC_DB, layer='AHGFCatchment', where=f"HydroID={catchment_id}")
             
         if catchment.empty:
-            raise ValueError(f"Could not find Catchment ID {catchment_id} in local database.")
+            raise ValueError(f"Could not find Catchment ID {catchment_id} in the local offline database.")
              
         if catchment.crs is None:
             catchment.set_crs(epsg=4283, inplace=True)
@@ -143,6 +160,9 @@ def get_catchment_average(raster_path, geom):
 
 # --- 4. CALCULATION FUNCTIONS ---
 def calculate_automated_pmp(catchment_id):
+    if not MASTER_PMP_ZONES_SHP:
+        raise FileNotFoundError("Master PMP Zones shapefile is missing. Check System Diagnostics.")
+        
     catchment = fetch_catchment_from_geofabric(catchment_id)
     catchment_albers = catchment.to_crs(epsg=3577) 
     area_km2 = catchment_albers.geometry.area.sum() / 1e6
@@ -160,9 +180,13 @@ def calculate_automated_pmp(catchment_id):
     full_zone_name = intersecting_zone['PMP_ZONE'].iloc[0]
     
     if "GSAM" in full_zone_name and "Transition" not in full_zone_name:
+        if not GSAM_CD_ROOT or not GSAM_MAF_GRID:
+            raise FileNotFoundError("GSAM data files are missing. Check System Diagnostics.")
         method, cd_root = "GSAM", GSAM_CD_ROOT
         maf_grid_path, topo_grid_path, standard_epw = GSAM_MAF_GRID, GSAM_TOPO_GRID, GSAM_STANDARD_EPW
     elif "GTSMR" in full_zone_name and "Transition" not in full_zone_name:
+        if not GTSMR_CD_ROOT or not GTSMR_MAF_GRID:
+            raise FileNotFoundError("GTSMR data files are missing. Check System Diagnostics.")
         method, cd_root = "GTSMR", GTSMR_CD_ROOT
         maf_grid_path, topo_grid_path, standard_epw = GTSMR_MAF_GRID, GTSMR_TOPO_GRID, GTSMR_STANDARD_EPW
     else:
@@ -203,16 +227,31 @@ def calculate_automated_pmp(catchment_id):
     return {"Area (km2)": round(area_km2, 2), "Zone": full_zone_name, "Method": method, "MAF": round(maf_value, 3), "TAF": round(topo_value, 3), "PMP (mm)": final_pmp}
 
 # --- 5. STREAMLIT WEB INTERFACE ---
+st.set_page_config(page_title="BoM PMP Calculator", layout="wide")
+
+# Sidebar Diagnostics
+with st.sidebar:
+    st.markdown("### 📊 System Diagnostics")
+    st.write("Streamlit servers are hosted outside Australia, so the BoM API is geofenced. The app will rely exclusively on these offline files:")
+    st.write("✅ Database Found" if LOCAL_GEOFABRIC_DB else "❌ Database Missing")
+    st.write("✅ PMP Zones Found" if MASTER_PMP_ZONES_SHP else "❌ PMP Zones Missing")
+    st.write("✅ GSAM CD Found" if GSAM_CD_ROOT else "❌ GSAM CD Missing")
+    st.write("✅ GTSMR CD Found" if GTSMR_CD_ROOT else "❌ GTSMR CD Missing")
+    
+    if st.button("Reload Data (Clear Cache)"):
+        st.cache_resource.clear()
+        st.rerun()
+
 st.title("BoM PMP Automated Calculator")
-st.markdown("Calculate GSAM, GTSMR, and GSDM directly from the Geofabric API.")
+st.markdown("Calculate GSAM, GTSMR, and GSDM instantly.")
 
 tool = st.selectbox("Select a tool:", ["Long-Duration PMP (GSAM / GTSMR)", "Short-Duration PMP (GSDM)"])
 catchment_id = st.text_input("Enter Geofabric Catchment ID:")
 
 if tool == "Long-Duration PMP (GSAM / GTSMR)":
-    if st.button("Calculate Long-Duration PMP"):
+    if st.button("Calculate Long-Duration PMP", type="primary"):
         if catchment_id:
-            with st.spinner("Fetching Geofabric API and processing grids..."):
+            with st.spinner("Processing geospatial data..."):
                 try:
                     results = calculate_automated_pmp(catchment_id)
                     st.success("Calculation Complete!")
@@ -232,12 +271,14 @@ if tool == "Long-Duration PMP (GSAM / GTSMR)":
             st.warning("Please enter a Catchment ID.")
 
 elif tool == "Short-Duration PMP (GSDM)":
-    st.markdown("### Catchment Details")
-    maf_input = st.number_input("Moisture Adjustment Factor (MAF) from BoM Figure 3:", min_value=0.0, max_value=2.0, value=1.0)
-    r_percent = st.slider("Percentage of ROUGH terrain (%)", 0, 100, 0) / 100
-    elev_input = st.number_input("Mean Elevation (m)", min_value=0, value=500)
-    
-    if st.button("Calculate Short-Duration PMP"):
+    col1, col2 = st.columns(2)
+    with col1:
+        maf_input = st.number_input("Moisture Adjustment Factor (MAF) from BoM Figure 3:", min_value=0.0, max_value=2.0, value=1.0)
+        elev_input = st.number_input("Mean Elevation (m)", min_value=0, value=500)
+    with col2:
+        r_percent = st.slider("Percentage of ROUGH terrain (%)", 0, 100, 0) / 100
+        
+    if st.button("Calculate Short-Duration PMP", type="primary"):
         if catchment_id:
             with st.spinner("Processing GSDM..."):
                 try:
