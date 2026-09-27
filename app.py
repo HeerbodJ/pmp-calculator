@@ -245,7 +245,7 @@ st.title("PMP Calculator")
 st.markdown("Calculate GSAM, GTSMR, and GSDM instantly.")
 
 # NEW: Info box with direct links to the BoM Geofabric and National Map
-st.info("🔍 **Need a Catchment ID?** Find your target HydroID or SegmentNo using the official [BoM Geofabric Portal](http://www.bom.gov.au/water/geofabric/) or by exploring the Catchment layers on [NationalMap](https://nationalmap.gov.au/).")
+st.info("🔍 **Need a Catchment ID?** Find your target HydroID or SegmentNo using the official [BoM Geofabric Portal](https://portal.wsapi.cloud.bom.gov.au/arcgis/apps/sites/#/australian-water-data-service/datasets/35719064c4ea4ad79faa82f5c9c22068/explore?layer=7&location=-26.540734%2C136.026183%2C5.02) or by exploring the Catchment layers on [NationalMap](https://nationalmap.gov.au/).")
 
 tool = st.selectbox("Select a tool:", ["Long-Duration PMP (GSAM / GTSMR)", "Short-Duration PMP (GSDM)"])
 catchment_id = st.text_input("Enter Geofabric Catchment ID:")
