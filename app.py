@@ -231,7 +231,7 @@ st.set_page_config(page_title="PMP Calculator", layout="wide")
 # Sidebar Diagnostics
 with st.sidebar:
     st.markdown("### 📊 System Diagnostics")
-    st.write("Streamlit servers are hosted outside Australia, so the BoM API is geofenced. The app will rely exclusively on these offline files:")
+    st.write("Some servers are hosted outside Australia, so the BoM API is geofenced. The app will rely exclusively on these offline files:")
     st.write("✅ Database Found" if LOCAL_GEOFABRIC_DB else "❌ Database Missing")
     st.write("✅ PMP Zones Found" if MASTER_PMP_ZONES_SHP else "❌ PMP Zones Missing")
     st.write("✅ GSAM CD Found" if GSAM_CD_ROOT else "❌ GSAM CD Missing")
