@@ -5,3 +5,6 @@ pandas
 scipy
 requests
 gdown
+xlrd
+openpyxl
+pyogrio
