@@ -49,9 +49,18 @@ def find_dir_starts_with(dirname):
     return ""
 
 def find_gdb():
+    # 1. Search for internal FileGDB table files (.gdbtable)
     for p in DATA_ROOT.rglob('*'):
-        if "__MACOSX" not in p.parts and p.is_dir() and p.name.lower() in ["sh_catchments_gdb", "sh_catchments.gdb", "sh_catchments_gdb.gdb"]:
-            return str(p)
+        if "__MACOSX" not in p.parts and p.is_file() and p.suffix.lower() in ['.gdbtable', '.gdbtablx']:
+            return str(p.parent)
+            
+    # 2. Fallback: Search for any directory ending in .gdb that contains files
+    for p in DATA_ROOT.rglob('*.gdb'):
+        if "__MACOSX" not in p.parts and p.is_dir():
+            # Check if this .gdb actually contains files, not just another subfolder
+            if any(f.is_file() for f in p.iterdir()):
+                return str(p)
+                
     return ""
 
 # The app now hunts for the files itself instead of relying on hardcoded paths
@@ -127,9 +136,20 @@ def fetch_catchment_from_geofabric(catchment_input):
         if not LOCAL_GEOFABRIC_DB or not Path(LOCAL_GEOFABRIC_DB).exists():
             raise FileNotFoundError("BoM API is blocked, and the offline database could not be found. Check System Diagnostics.")
             
-        catchment = gpd.read_file(LOCAL_GEOFABRIC_DB, layer='AHGFCatchment', where=f"SegmentNo={catchment_id}")
+        # Explicitly pass the OpenFileGDB driver and pyogrio engine
+        catchment = gpd.read_file(
+            LOCAL_GEOFABRIC_DB, 
+            layer='AHGFCatchment', 
+            where=f"SegmentNo={catchment_id}",
+            engine="pyogrio"
+        )
         if catchment.empty:
-            catchment = gpd.read_file(LOCAL_GEOFABRIC_DB, layer='AHGFCatchment', where=f"HydroID={catchment_id}")
+            catchment = gpd.read_file(
+                LOCAL_GEOFABRIC_DB, 
+                layer='AHGFCatchment', 
+                where=f"HydroID={catchment_id}",
+                engine="pyogrio"
+            )
             
         if catchment.empty:
             raise ValueError(f"Could not find Catchment ID {catchment_id} in the local offline database.")
