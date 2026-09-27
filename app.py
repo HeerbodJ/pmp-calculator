@@ -21,7 +21,6 @@ def download_and_extract_data():
         file_id = '1r9mZGQcSGZ_iCdrV3tAbDdOY_Hueej5t'
         output_zip = 'pmp_data.zip'
         
-        # fuzzy=True bypasses Google Drive's virus scan warning on large files
         gdown.download(id=file_id, output=output_zip, quiet=False, fuzzy=True)
         
         with zipfile.ZipFile(output_zip, 'r') as zip_ref:
@@ -37,7 +36,6 @@ DATA_ROOT = Path("pmp_data")
 
 def find_file(filename):
     for p in DATA_ROOT.rglob('*'):
-        # Ignores hidden macOS zip artifacts if they exist
         if "__MACOSX" not in p.parts and p.is_file() and p.name.lower() == filename.lower():
             return str(p)
     return ""
@@ -49,21 +47,15 @@ def find_dir_starts_with(dirname):
     return ""
 
 def find_gdb():
-    # 1. Search for internal FileGDB table files (.gdbtable)
     for p in DATA_ROOT.rglob('*'):
         if "__MACOSX" not in p.parts and p.is_file() and p.suffix.lower() in ['.gdbtable', '.gdbtablx']:
             return str(p.parent)
-            
-    # 2. Fallback: Search for any directory ending in .gdb that contains files
     for p in DATA_ROOT.rglob('*.gdb'):
         if "__MACOSX" not in p.parts and p.is_dir():
-            # Check if this .gdb actually contains files, not just another subfolder
             if any(f.is_file() for f in p.iterdir()):
                 return str(p)
-                
     return ""
 
-# The app now hunts for the files itself instead of relying on hardcoded paths
 LOCAL_GEOFABRIC_DB = find_gdb()
 MASTER_PMP_ZONES_SHP = find_file("zones_all.shp")
 GSAM_CD_ROOT = find_dir_starts_with("gsam_cd")
@@ -76,7 +68,6 @@ GTSMR_MAF_GRID = find_file("yearly005pwm.asc")
 GTSMR_TOPO_GRID = None  
 GTSMR_STANDARD_EPW = 73.0
 
-# GSDM Base Tables
 GSDM_DURATIONS = [0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0]
 GSDM_AREAS = [1.0, 2.6, 16.0, 65.0, 153.0, 280.0, 433.0, 635.0, 847.0]
 GSDM_SMOOTH_DATA = [
@@ -132,24 +123,12 @@ def fetch_catchment_from_geofabric(catchment_input):
         return catchment
         
     except Exception:
-        # Offline Fallback (This will trigger 99% of the time on Streamlit Cloud)
         if not LOCAL_GEOFABRIC_DB or not Path(LOCAL_GEOFABRIC_DB).exists():
             raise FileNotFoundError("BoM API is blocked, and the offline database could not be found. Check System Diagnostics.")
             
-        # Explicitly pass the OpenFileGDB driver and pyogrio engine
-        catchment = gpd.read_file(
-            LOCAL_GEOFABRIC_DB, 
-            layer='AHGFCatchment', 
-            where=f"SegmentNo={catchment_id}",
-            engine="pyogrio"
-        )
+        catchment = gpd.read_file(LOCAL_GEOFABRIC_DB, layer='AHGFCatchment', where=f"SegmentNo={catchment_id}", engine="pyogrio")
         if catchment.empty:
-            catchment = gpd.read_file(
-                LOCAL_GEOFABRIC_DB, 
-                layer='AHGFCatchment', 
-                where=f"HydroID={catchment_id}",
-                engine="pyogrio"
-            )
+            catchment = gpd.read_file(LOCAL_GEOFABRIC_DB, layer='AHGFCatchment', where=f"HydroID={catchment_id}", engine="pyogrio")
             
         if catchment.empty:
             raise ValueError(f"Could not find Catchment ID {catchment_id} in the local offline database.")
@@ -247,7 +226,7 @@ def calculate_automated_pmp(catchment_id):
     return {"Area (km2)": round(area_km2, 2), "Zone": full_zone_name, "Method": method, "MAF": round(maf_value, 3), "TAF": round(topo_value, 3), "PMP (mm)": final_pmp}
 
 # --- 5. STREAMLIT WEB INTERFACE ---
-st.set_page_config(page_title="BoM PMP Calculator", layout="wide")
+st.set_page_config(page_title="PMP Calculator", layout="wide")
 
 # Sidebar Diagnostics
 with st.sidebar:
@@ -262,8 +241,11 @@ with st.sidebar:
         st.cache_resource.clear()
         st.rerun()
 
-st.title("BoM PMP Automated Calculator")
+st.title("PMP Calculator")
 st.markdown("Calculate GSAM, GTSMR, and GSDM instantly.")
+
+# NEW: Info box with direct links to the BoM Geofabric and National Map
+st.info("🔍 **Need a Catchment ID?** Find your target HydroID or SegmentNo using the official [BoM Geofabric Portal](http://www.bom.gov.au/water/geofabric/) or by exploring the Catchment layers on [NationalMap](https://nationalmap.gov.au/).")
 
 tool = st.selectbox("Select a tool:", ["Long-Duration PMP (GSAM / GTSMR)", "Short-Duration PMP (GSDM)"])
 catchment_id = st.text_input("Enter Geofabric Catchment ID:")
@@ -291,12 +273,18 @@ if tool == "Long-Duration PMP (GSAM / GTSMR)":
             st.warning("Please enter a Catchment ID.")
 
 elif tool == "Short-Duration PMP (GSDM)":
+    st.markdown("### Catchment Details")
+    
+    # NEW: Direct reference link to the official GSDM guidebook for finding MAF and Roughness percentages
+    st.markdown("📖 *Reference the official [BoM GSDM Guidebook (PDF)](http://www.bom.gov.au/water/designRainfalls/document/GSDM.pdf) for the required inputs below.*")
+    
     col1, col2 = st.columns(2)
     with col1:
         maf_input = st.number_input("Moisture Adjustment Factor (MAF) from BoM Figure 3:", min_value=0.0, max_value=2.0, value=1.0)
         elev_input = st.number_input("Mean Elevation (m)", min_value=0, value=500)
     with col2:
         r_percent = st.slider("Percentage of ROUGH terrain (%)", 0, 100, 0) / 100
+        st.caption("See Guidebook Section 3 for terrain classification rules.")
         
     if st.button("Calculate Short-Duration PMP", type="primary"):
         if catchment_id:
