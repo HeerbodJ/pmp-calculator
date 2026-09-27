@@ -1,0 +1,7 @@
+streamlit
+geopandas
+rasterio
+pandas
+scipy
+requests
+gdown
