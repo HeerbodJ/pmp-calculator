@@ -299,6 +299,12 @@ hide_st_style = """
             """
 st.markdown(hide_st_style, unsafe_allow_html=True)
 
+# Initialize session state storage
+if "long_pmp_results" not in st.session_state:
+    st.session_state.long_pmp_results = None
+if "gsdm_results" not in st.session_state:
+    st.session_state.gsdm_results = None
+
 with st.sidebar:
     st.markdown("### 📊 System Diagnostics")
     st.write("Streamlit servers are hosted outside Australia, so the BoM API is geofenced. The app will rely exclusively on these offline files:")
@@ -309,6 +315,8 @@ with st.sidebar:
     
     if st.button("Reload Data (Clear Cache)"):
         st.cache_resource.clear()
+        st.session_state.long_pmp_results = None
+        st.session_state.gsdm_results = None
         st.rerun()
 
 st.title("PMP Calculator")
@@ -323,37 +331,53 @@ if tool == "Long-Duration PMP (GSAM / GTSMR)":
         if catchment_id:
             with st.spinner("Processing geospatial data..."):
                 try:
-                    results = calculate_automated_pmp(catchment_id)
-                    st.success("Calculation Complete!")
-                    
-                    col1, col2 = st.columns(2)
-                    col1.metric("Catchment Area", f"{results['Area (km2)']} km²")
-                    col1.metric("PMP Zone", results['Zone'])
-                    col2.metric("MAF", results['MAF'])
-                    col2.metric("TAF", results['TAF'])
-                    
-                    st.subheader("Final PMP Depths")
-                    df_pmp = pd.DataFrame(list(results['PMP (mm)'].items()), columns=['Duration', 'Depth (mm)'])
-                    st.table(df_pmp)
-                    
-                    # --- EXPORT SECTION ---
-                    st.markdown("### 📥 Export Results")
-                    col_csv, col_gis, col_pdf = st.columns(3)
-                    
-                    csv_data = create_csv(results['PMP (mm)'])
-                    col_csv.download_button("Download CSV", data=csv_data, file_name=f"PMP_{catchment_id}.csv", mime="text/csv")
-                    
-                    meta_dict = {"Area_km2": results["Area (km2)"], "Zone": results["Zone"], "Method": results["Method"], "MAF": results["MAF"], "TAF": results["TAF"]}
-                    geojson_data = create_geojson(results['Catchment_Geo'], meta_dict, results['PMP (mm)'])
-                    col_gis.download_button("Download GIS Boundary", data=geojson_data, file_name=f"Catchment_{catchment_id}.geojson", mime="application/geo+json")
-                    
-                    pdf_data = create_pdf(catchment_id, tool, meta_dict, results['PMP (mm)'])
-                    col_pdf.download_button("Download PDF Report", data=pdf_data, file_name=f"PMP_Report_{catchment_id}.pdf", mime="application/pdf")
-                    
+                    res = calculate_automated_pmp(catchment_id)
+                    st.session_state.long_pmp_results = {
+                        "results": res,
+                        "catchment_id": catchment_id
+                    }
                 except Exception as e:
                     st.error(f"Error: {e}")
+                    st.session_state.long_pmp_results = None
         else:
             st.warning("Please enter a Catchment ID.")
+
+    # Render results from session state (persists during downloads)
+    if st.session_state.long_pmp_results is not None:
+        results = st.session_state.long_pmp_results["results"]
+        cid = st.session_state.long_pmp_results["catchment_id"]
+        
+        st.success("Calculation Complete!")
+        
+        col1, col2 = st.columns(2)
+        col1.metric("Catchment Area", f"{results['Area (km2)']} km²")
+        col1.metric("PMP Zone", results['Zone'])
+        col2.metric("MAF", results['MAF'])
+        col2.metric("TAF", results['TAF'])
+        
+        st.subheader("Final PMP Depths")
+        df_pmp = pd.DataFrame(list(results['PMP (mm)'].items()), columns=['Duration', 'Depth (mm)'])
+        st.table(df_pmp)
+        
+        # --- EXPORT SECTION ---
+        st.markdown("### 📥 Export Results")
+        col_csv, col_gis, col_pdf = st.columns(3)
+        
+        csv_data = create_csv(results['PMP (mm)'])
+        col_csv.download_button("Download CSV", data=csv_data, file_name=f"PMP_{cid}.csv", mime="text/csv", key="long_csv")
+        
+        meta_dict = {
+            "Area_km2": results["Area (km2)"], 
+            "Zone": results["Zone"], 
+            "Method": results["Method"], 
+            "MAF": results["MAF"], 
+            "TAF": results["TAF"]
+        }
+        geojson_data = create_geojson(results['Catchment_Geo'], meta_dict, results['PMP (mm)'])
+        col_gis.download_button("Download GIS Boundary", data=geojson_data, file_name=f"Catchment_{cid}.geojson", mime="application/geo+json", key="long_gis")
+        
+        pdf_data = create_pdf(cid, tool, meta_dict, results['PMP (mm)'])
+        col_pdf.download_button("Download PDF Report", data=pdf_data, file_name=f"PMP_Report_{cid}.pdf", mime="application/pdf", key="long_pdf")
 
 elif tool == "Short-Duration PMP (GSDM)":
     st.markdown("### Catchment Details")
@@ -374,9 +398,6 @@ elif tool == "Short-Duration PMP (GSDM)":
                     catchment = fetch_catchment_from_geofabric(catchment_id)
                     area_km2 = catchment.to_crs(epsg=3577).geometry.area.sum() / 1e6
                     
-                    if area_km2 > 1000:
-                        st.warning(f"Catchment area ({area_km2:.2f} km²) exceeds the 1,000 km² limit for GSDM. Results may not be valid.")
-                        
                     eaf_value = 1.0 if elev_input <= 1500 else 1.0 - (((elev_input - 1500) / 300) * 0.05)
                     s_percent = 1.0 - r_percent
                     target_log_area = np.log10(max(1.0, min(area_km2, 1000.0)))
@@ -388,26 +409,51 @@ elif tool == "Short-Duration PMP (GSDM)":
                         dr_val = float(interp1d(log_areas, gsdm_rough_df[dur], kind='linear', fill_value='extrapolate')(target_log_area))
                         final_gsdm[f"{dur} Hours"] = round((s_percent * ds_val + r_percent * dr_val) * maf_input * eaf_value, 1)
                     
-                    st.success("Calculation Complete!")
-                    st.metric("Catchment Area", f"{area_km2:.2f} km²")
-                    df_gsdm = pd.DataFrame(list(final_gsdm.items()), columns=['Duration', 'Depth (mm)'])
-                    st.table(df_gsdm)
-                    
-                    # --- EXPORT SECTION ---
-                    st.markdown("### 📥 Export Results")
-                    col_csv, col_gis, col_pdf = st.columns(3)
-                    
-                    csv_data = create_csv(final_gsdm)
-                    col_csv.download_button("Download CSV", data=csv_data, file_name=f"GSDM_{catchment_id}.csv", mime="text/csv")
-                    
-                    meta_dict = {"Area_km2": round(area_km2, 2), "MAF_Input": maf_input, "EAF": round(eaf_value, 3), "Rough_Pct": r_percent * 100}
-                    geojson_data = create_geojson(catchment, meta_dict, final_gsdm)
-                    col_gis.download_button("Download GIS Boundary", data=geojson_data, file_name=f"Catchment_{catchment_id}.geojson", mime="application/geo+json")
-                    
-                    pdf_data = create_pdf(catchment_id, tool, meta_dict, final_gsdm)
-                    col_pdf.download_button("Download PDF Report", data=pdf_data, file_name=f"GSDM_Report_{catchment_id}.pdf", mime="application/pdf")
-                    
+                    st.session_state.gsdm_results = {
+                        "final_gsdm": final_gsdm,
+                        "catchment": catchment,
+                        "area_km2": area_km2,
+                        "maf_input": maf_input,
+                        "eaf_value": eaf_value,
+                        "r_percent": r_percent,
+                        "catchment_id": catchment_id
+                    }
                 except Exception as e:
                     st.error(f"Error: {e}")
+                    st.session_state.gsdm_results = None
         else:
             st.warning("Please enter a Catchment ID.")
+
+    # Render GSDM results from session state (persists during downloads)
+    if st.session_state.gsdm_results is not None:
+        res = st.session_state.gsdm_results
+        cid = res["catchment_id"]
+        area_km2 = res["area_km2"]
+        final_gsdm = res["final_gsdm"]
+        
+        if area_km2 > 1000:
+            st.warning(f"Catchment area ({area_km2:.2f} km²) exceeds the 1,000 km² limit for GSDM. Results may not be valid.")
+            
+        st.success("Calculation Complete!")
+        st.metric("Catchment Area", f"{area_km2:.2f} km²")
+        df_gsdm = pd.DataFrame(list(final_gsdm.items()), columns=['Duration', 'Depth (mm)'])
+        st.table(df_gsdm)
+        
+        # --- EXPORT SECTION ---
+        st.markdown("### 📥 Export Results")
+        col_csv, col_gis, col_pdf = st.columns(3)
+        
+        csv_data = create_csv(final_gsdm)
+        col_csv.download_button("Download CSV", data=csv_data, file_name=f"GSDM_{cid}.csv", mime="text/csv", key="gsdm_csv")
+        
+        meta_dict = {
+            "Area_km2": round(area_km2, 2), 
+            "MAF_Input": res["maf_input"], 
+            "EAF": round(res["eaf_value"], 3), 
+            "Rough_Pct": res["r_percent"] * 100
+        }
+        geojson_data = create_geojson(res["catchment"], meta_dict, final_gsdm)
+        col_gis.download_button("Download GIS Boundary", data=geojson_data, file_name=f"Catchment_{cid}.geojson", mime="application/geo+json", key="gsdm_gis")
+        
+        pdf_data = create_pdf(cid, tool, meta_dict, final_gsdm)
+        col_pdf.download_button("Download PDF Report", data=pdf_data, file_name=f"GSDM_Report_{cid}.pdf", mime="application/pdf", key="gsdm_pdf")
