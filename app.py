@@ -10,6 +10,7 @@ import requests
 import gdown
 import zipfile
 import os
+from fpdf import FPDF
 
 # --- 1. DATA DOWNLOADER ---
 @st.cache_resource
@@ -95,7 +96,7 @@ GSDM_ROUGH_DATA = [
 gsdm_smooth_df = pd.DataFrame(GSDM_SMOOTH_DATA, index=GSDM_AREAS, columns=GSDM_DURATIONS)
 gsdm_rough_df = pd.DataFrame(GSDM_ROUGH_DATA, index=GSDM_AREAS, columns=GSDM_DURATIONS)
 
-# --- 3. HELPER FUNCTIONS ---
+# --- 3. HELPER & EXPORT FUNCTIONS ---
 def fetch_catchment_from_geofabric(catchment_input):
     try:
         catchment_id = int(str(catchment_input).strip(' "\''))
@@ -156,6 +157,47 @@ def get_catchment_average(raster_path, geom):
         if valid_data.size == 0:
             raise ValueError(f"Catchment does not overlap with valid data in {raster_path}.")
         return np.mean(valid_data)
+
+def create_csv(pmp_dict):
+    df = pd.DataFrame(list(pmp_dict.items()), columns=['Duration', 'Depth (mm)'])
+    return df.to_csv(index=False).encode('utf-8')
+
+def create_geojson(catchment_gdf, metadata_dict, pmp_dict):
+    gdf = catchment_gdf.copy()
+    # Embed standard metadata
+    for key, val in metadata_dict.items():
+        gdf[key] = val
+    # Embed PMP depths as individual columns
+    for dur, depth in pmp_dict.items():
+        col_name = f"PMP_{dur.replace(' ', '')}"
+        gdf[col_name] = depth
+    return gdf.to_json()
+
+def create_pdf(cid, tool, metadata, pmp_dict):
+    pdf = FPDF()
+    pdf.add_page()
+    
+    pdf.set_font("helvetica", size=16, style="B")
+    pdf.cell(0, 10, txt="BoM PMP Calculation Report", new_x="LMARGIN", new_y="NEXT", align='C')
+    pdf.cell(0, 10, txt="", new_x="LMARGIN", new_y="NEXT") # Spacer
+    
+    pdf.set_font("helvetica", size=12)
+    pdf.cell(0, 10, txt=f"Catchment ID: {cid}", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 10, txt=f"Calculation Method: {tool}", new_x="LMARGIN", new_y="NEXT")
+    
+    for key, val in metadata.items():
+        pdf.cell(0, 10, txt=f"{key}: {val}", new_x="LMARGIN", new_y="NEXT")
+        
+    pdf.cell(0, 10, txt="", new_x="LMARGIN", new_y="NEXT") # Spacer
+    
+    pdf.set_font("helvetica", size=12, style="B")
+    pdf.cell(0, 10, txt="Final PMP Depths:", new_x="LMARGIN", new_y="NEXT")
+    
+    pdf.set_font("helvetica", size=12)
+    for dur, depth in pmp_dict.items():
+        pdf.cell(0, 8, txt=f"  - {dur}: {depth} mm", new_x="LMARGIN", new_y="NEXT")
+        
+    return bytes(pdf.output())
 
 # --- 4. CALCULATION FUNCTIONS ---
 def calculate_automated_pmp(catchment_id):
@@ -223,29 +265,33 @@ def calculate_automated_pmp(catchment_id):
         f_interp = interp1d(dad_df['Area_km2'], dad_df[duration], kind='linear', fill_value='extrapolate')
         final_pmp[f"{duration} Hours"] = round(float(f_interp(area_km2)) * maf_value * topo_value, 1)
         
-    return {"Area (km2)": round(area_km2, 2), "Zone": full_zone_name, "Method": method, "MAF": round(maf_value, 3), "TAF": round(topo_value, 3), "PMP (mm)": final_pmp}
+    return {
+        "Area (km2)": round(area_km2, 2), 
+        "Zone": full_zone_name, 
+        "Method": method, 
+        "MAF": round(maf_value, 3), 
+        "TAF": round(topo_value, 3), 
+        "PMP (mm)": final_pmp,
+        "Catchment_Geo": catchment
+    }
 
 # --- 5. STREAMLIT WEB INTERFACE ---
 st.set_page_config(page_title="PMP Calculator", layout="wide")
 
-# Inject aggressive CSS to hide all Streamlit branding
 hide_st_style = """
             <style>
             #MainMenu {visibility: hidden;}
             footer {visibility: hidden !important;}
             header {visibility: hidden !important;}
-            /* Specifically target the 'Built with Streamlit' link */
             a[href^="https://streamlit.io/cloud"] {display: none !important;}
-            /* Hide any custom sidebar footer containers */
             [data-testid="stSidebarFooter"] {display: none !important;}
             </style>
             """
 st.markdown(hide_st_style, unsafe_allow_html=True)
 
-# Sidebar Diagnostics
 with st.sidebar:
     st.markdown("### 📊 System Diagnostics")
-    st.write("Some servers are hosted outside Australia, so the BoM API is geofenced. The app will rely exclusively on these offline files:")
+    st.write("Streamlit servers are hosted outside Australia, so the BoM API is geofenced. The app will rely exclusively on these offline files:")
     st.write("✅ Database Found" if LOCAL_GEOFABRIC_DB else "❌ Database Missing")
     st.write("✅ PMP Zones Found" if MASTER_PMP_ZONES_SHP else "❌ PMP Zones Missing")
     st.write("✅ GSAM CD Found" if GSAM_CD_ROOT else "❌ GSAM CD Missing")
@@ -257,8 +303,6 @@ with st.sidebar:
 
 st.title("PMP Calculator")
 st.markdown("Calculate GSAM, GTSMR, and GSDM instantly.")
-
-# NEW: Info box with direct links to the BoM Geofabric and National Map
 st.info("🔍 **Need a Catchment ID?** Find your target HydroID or SegmentNo using the official [BoM Geofabric Portal](https://portal.wsapi.cloud.bom.gov.au/arcgis/apps/sites/#/australian-water-data-service/datasets/35719064c4ea4ad79faa82f5c9c22068/explore?layer=7&location=-26.540734%2C136.026183%2C5.02) or by exploring the Catchment layers on [NationalMap](https://nationalmap.gov.au/).")
 
 tool = st.selectbox("Select a tool:", ["Long-Duration PMP (GSAM / GTSMR)", "Short-Duration PMP (GSDM)"])
@@ -281,6 +325,21 @@ if tool == "Long-Duration PMP (GSAM / GTSMR)":
                     st.subheader("Final PMP Depths")
                     df_pmp = pd.DataFrame(list(results['PMP (mm)'].items()), columns=['Duration', 'Depth (mm)'])
                     st.table(df_pmp)
+                    
+                    # --- EXPORT SECTION ---
+                    st.markdown("### 📥 Export Results")
+                    col_csv, col_gis, col_pdf = st.columns(3)
+                    
+                    csv_data = create_csv(results['PMP (mm)'])
+                    col_csv.download_button("Download CSV", data=csv_data, file_name=f"PMP_{catchment_id}.csv", mime="text/csv")
+                    
+                    meta_dict = {"Area_km2": results["Area (km2)"], "Zone": results["Zone"], "Method": results["Method"], "MAF": results["MAF"], "TAF": results["TAF"]}
+                    geojson_data = create_geojson(results['Catchment_Geo'], meta_dict, results['PMP (mm)'])
+                    col_gis.download_button("Download GIS Boundary", data=geojson_data, file_name=f"Catchment_{catchment_id}.geojson", mime="application/geo+json")
+                    
+                    pdf_data = create_pdf(catchment_id, tool, meta_dict, results['PMP (mm)'])
+                    col_pdf.download_button("Download PDF Report", data=pdf_data, file_name=f"PMP_Report_{catchment_id}.pdf", mime="application/pdf")
+                    
                 except Exception as e:
                     st.error(f"Error: {e}")
         else:
@@ -288,8 +347,6 @@ if tool == "Long-Duration PMP (GSAM / GTSMR)":
 
 elif tool == "Short-Duration PMP (GSDM)":
     st.markdown("### Catchment Details")
-    
-    # NEW: Direct reference link to the official GSDM guidebook for finding MAF and Roughness percentages
     st.markdown("📖 *Reference the official [BoM GSDM Guidebook (PDF)](http://www.bom.gov.au/water/designRainfalls/document/GSDM.pdf) for the required inputs below.*")
     
     col1, col2 = st.columns(2)
@@ -325,6 +382,21 @@ elif tool == "Short-Duration PMP (GSDM)":
                     st.metric("Catchment Area", f"{area_km2:.2f} km²")
                     df_gsdm = pd.DataFrame(list(final_gsdm.items()), columns=['Duration', 'Depth (mm)'])
                     st.table(df_gsdm)
+                    
+                    # --- EXPORT SECTION ---
+                    st.markdown("### 📥 Export Results")
+                    col_csv, col_gis, col_pdf = st.columns(3)
+                    
+                    csv_data = create_csv(final_gsdm)
+                    col_csv.download_button("Download CSV", data=csv_data, file_name=f"GSDM_{catchment_id}.csv", mime="text/csv")
+                    
+                    meta_dict = {"Area_km2": round(area_km2, 2), "MAF_Input": maf_input, "EAF": round(eaf_value, 3), "Rough_Pct": r_percent * 100}
+                    geojson_data = create_geojson(catchment, meta_dict, final_gsdm)
+                    col_gis.download_button("Download GIS Boundary", data=geojson_data, file_name=f"Catchment_{catchment_id}.geojson", mime="application/geo+json")
+                    
+                    pdf_data = create_pdf(catchment_id, tool, meta_dict, final_gsdm)
+                    col_pdf.download_button("Download PDF Report", data=pdf_data, file_name=f"GSDM_Report_{catchment_id}.pdf", mime="application/pdf")
+                    
                 except Exception as e:
                     st.error(f"Error: {e}")
         else:
