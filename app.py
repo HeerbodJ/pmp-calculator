@@ -228,6 +228,14 @@ def calculate_automated_pmp(catchment_id):
 # --- 5. STREAMLIT WEB INTERFACE ---
 st.set_page_config(page_title="PMP Calculator", layout="wide")
 
+# Inject CSS to hide the Streamlit footer
+hide_st_style = """
+            <style>
+            footer {visibility: hidden;}
+            </style>
+            """
+st.markdown(hide_st_style, unsafe_allow_html=True)
+
 # Sidebar Diagnostics
 with st.sidebar:
     st.markdown("### 📊 System Diagnostics")
