@@ -164,6 +164,15 @@ def create_csv(pmp_dict):
 
 def create_geojson(catchment_gdf, metadata_dict, pmp_dict):
     gdf = catchment_gdf.copy()
+    
+    # Find any hidden Timestamp columns in the Geofabric layers and convert them to simple strings
+    for col in gdf.columns:
+        if col != gdf.geometry.name:
+            if pd.api.types.is_datetime64_any_dtype(gdf[col]):
+                gdf[col] = gdf[col].astype(str)
+            elif gdf[col].dtype == 'object':
+                gdf[col] = gdf[col].apply(lambda x: str(x) if isinstance(x, pd.Timestamp) else x)
+
     # Embed standard metadata
     for key, val in metadata_dict.items():
         gdf[key] = val
@@ -171,6 +180,7 @@ def create_geojson(catchment_gdf, metadata_dict, pmp_dict):
     for dur, depth in pmp_dict.items():
         col_name = f"PMP_{dur.replace(' ', '')}"
         gdf[col_name] = depth
+        
     return gdf.to_json()
 
 def create_pdf(cid, tool, metadata, pmp_dict):
@@ -178,24 +188,24 @@ def create_pdf(cid, tool, metadata, pmp_dict):
     pdf.add_page()
     
     pdf.set_font("helvetica", size=16, style="B")
-    pdf.cell(0, 10, txt="BoM PMP Calculation Report", new_x="LMARGIN", new_y="NEXT", align='C')
-    pdf.cell(0, 10, txt="", new_x="LMARGIN", new_y="NEXT") # Spacer
+    pdf.cell(0, 10, text="BoM PMP Calculation Report", new_x="LMARGIN", new_y="NEXT", align='C')
+    pdf.cell(0, 10, text="", new_x="LMARGIN", new_y="NEXT") # Spacer
     
     pdf.set_font("helvetica", size=12)
-    pdf.cell(0, 10, txt=f"Catchment ID: {cid}", new_x="LMARGIN", new_y="NEXT")
-    pdf.cell(0, 10, txt=f"Calculation Method: {tool}", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 10, text=f"Catchment ID: {cid}", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 10, text=f"Calculation Method: {tool}", new_x="LMARGIN", new_y="NEXT")
     
     for key, val in metadata.items():
-        pdf.cell(0, 10, txt=f"{key}: {val}", new_x="LMARGIN", new_y="NEXT")
+        pdf.cell(0, 10, text=f"{key}: {val}", new_x="LMARGIN", new_y="NEXT")
         
-    pdf.cell(0, 10, txt="", new_x="LMARGIN", new_y="NEXT") # Spacer
+    pdf.cell(0, 10, text="", new_x="LMARGIN", new_y="NEXT") # Spacer
     
     pdf.set_font("helvetica", size=12, style="B")
-    pdf.cell(0, 10, txt="Final PMP Depths:", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 10, text="Final PMP Depths:", new_x="LMARGIN", new_y="NEXT")
     
     pdf.set_font("helvetica", size=12)
     for dur, depth in pmp_dict.items():
-        pdf.cell(0, 8, txt=f"  - {dur}: {depth} mm", new_x="LMARGIN", new_y="NEXT")
+        pdf.cell(0, 8, text=f"  - {dur}: {depth} mm", new_x="LMARGIN", new_y="NEXT")
         
     return bytes(pdf.output())
 
