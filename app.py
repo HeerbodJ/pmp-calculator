@@ -228,10 +228,16 @@ def calculate_automated_pmp(catchment_id):
 # --- 5. STREAMLIT WEB INTERFACE ---
 st.set_page_config(page_title="PMP Calculator", layout="wide")
 
-# Inject CSS to hide the Streamlit footer
+# Inject aggressive CSS to hide all Streamlit branding
 hide_st_style = """
             <style>
-            footer {visibility: hidden;}
+            #MainMenu {visibility: hidden;}
+            footer {visibility: hidden !important;}
+            header {visibility: hidden !important;}
+            /* Specifically target the 'Built with Streamlit' link */
+            a[href^="https://streamlit.io/cloud"] {display: none !important;}
+            /* Hide any custom sidebar footer containers */
+            [data-testid="stSidebarFooter"] {display: none !important;}
             </style>
             """
 st.markdown(hide_st_style, unsafe_allow_html=True)
