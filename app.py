@@ -11,6 +11,9 @@ import gdown
 import zipfile
 import os
 from fpdf import FPDF
+import plotly.express as px
+import folium
+from streamlit_folium import st_folium
 
 # --- 1. DATA DOWNLOADER ---
 @st.cache_resource
@@ -165,7 +168,6 @@ def create_csv(pmp_dict):
 def create_geojson(catchment_gdf, metadata_dict, pmp_dict):
     gdf = catchment_gdf.copy()
     
-    # Find any hidden Timestamp columns in the Geofabric layers and convert them to simple strings
     for col in gdf.columns:
         if col != gdf.geometry.name:
             if pd.api.types.is_datetime64_any_dtype(gdf[col]):
@@ -173,10 +175,8 @@ def create_geojson(catchment_gdf, metadata_dict, pmp_dict):
             elif gdf[col].dtype == 'object':
                 gdf[col] = gdf[col].apply(lambda x: str(x) if isinstance(x, pd.Timestamp) else x)
 
-    # Embed standard metadata
     for key, val in metadata_dict.items():
         gdf[key] = val
-    # Embed PMP depths as individual columns
     for dur, depth in pmp_dict.items():
         col_name = f"PMP_{dur.replace(' ', '')}"
         gdf[col_name] = depth
@@ -189,7 +189,7 @@ def create_pdf(cid, tool, metadata, pmp_dict):
     
     pdf.set_font("helvetica", size=16, style="B")
     pdf.cell(0, 10, text="BoM PMP Calculation Report", new_x="LMARGIN", new_y="NEXT", align='C')
-    pdf.cell(0, 10, text="", new_x="LMARGIN", new_y="NEXT") # Spacer
+    pdf.cell(0, 10, text="", new_x="LMARGIN", new_y="NEXT") 
     
     pdf.set_font("helvetica", size=12)
     pdf.cell(0, 10, text=f"Catchment ID: {cid}", new_x="LMARGIN", new_y="NEXT")
@@ -198,7 +198,7 @@ def create_pdf(cid, tool, metadata, pmp_dict):
     for key, val in metadata.items():
         pdf.cell(0, 10, text=f"{key}: {val}", new_x="LMARGIN", new_y="NEXT")
         
-    pdf.cell(0, 10, text="", new_x="LMARGIN", new_y="NEXT") # Spacer
+    pdf.cell(0, 10, text="", new_x="LMARGIN", new_y="NEXT") 
     
     pdf.set_font("helvetica", size=12, style="B")
     pdf.cell(0, 10, text="Final PMP Depths:", new_x="LMARGIN", new_y="NEXT")
@@ -299,7 +299,6 @@ hide_st_style = """
             """
 st.markdown(hide_st_style, unsafe_allow_html=True)
 
-# Initialize session state storage
 if "long_pmp_results" not in st.session_state:
     st.session_state.long_pmp_results = None
 if "gsdm_results" not in st.session_state:
@@ -322,14 +321,11 @@ with st.sidebar:
 st.title("PMP Calculator")
 st.markdown("Calculate GSAM, GTSMR, and GSDM instantly.")
 
-# SUGGESTION 4: Collapsible Context (Global)
 with st.expander("🔍 Need help finding your Catchment ID?"):
     st.markdown("Find your target HydroID or SegmentNo using the official [BoM Geofabric Portal](https://portal.wsapi.cloud.bom.gov.au/arcgis/apps/sites/#/australian-water-data-service/datasets/35719064c4ea4ad79faa82f5c9c22068/explore?layer=7&location=-26.540734%2C136.026183%2C5.02) or by exploring the Catchment layers on [NationalMap](https://nationalmap.gov.au/).")
 
-# Shared input so the user doesn't have to retype it when switching tabs
 catchment_id = st.text_input("Enter Geofabric Catchment ID:")
 
-# SUGGESTION 3: Tabbed Navigation
 tab_long, tab_short = st.tabs(["Long-Duration PMP (GSAM / GTSMR)", "Short-Duration PMP (GSDM)"])
 
 with tab_long:
@@ -348,7 +344,6 @@ with tab_long:
         else:
             st.warning("Please enter a Catchment ID.")
 
-    # Render results from session state (persists during downloads)
     if st.session_state.long_pmp_results is not None:
         results = st.session_state.long_pmp_results["results"]
         cid = st.session_state.long_pmp_results["catchment_id"]
@@ -365,7 +360,19 @@ with tab_long:
         df_pmp = pd.DataFrame(list(results['PMP (mm)'].items()), columns=['Duration', 'Depth (mm)'])
         st.table(df_pmp)
         
-        # --- EXPORT SECTION ---
+        # Interactive Plotly Chart
+        fig = px.line(df_pmp, x='Duration', y='Depth (mm)', markers=True, title="PMP Depth vs. Duration")
+        fig.update_traces(line_color='#ef4444', marker=dict(size=8))
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # Interactive Folium Map
+        st.markdown("### Catchment Location")
+        catchment_geo = results['Catchment_Geo']
+        centroid = catchment_geo.to_crs(epsg=4326).geometry.iloc[0].centroid
+        m = folium.Map(location=[centroid.y, centroid.x], zoom_start=10)
+        folium.GeoJson(catchment_geo).add_to(m)
+        st_folium(m, width=720, height=400)
+        
         st.markdown("### 📥 Export Results")
         col_csv, col_gis, col_pdf = st.columns(3)
         
@@ -386,7 +393,6 @@ with tab_long:
         col_pdf.download_button("Download PDF Report", data=pdf_data, file_name=f"PMP_Report_{cid}.pdf", mime="application/pdf", key="long_pdf")
 
 with tab_short:
-    # SUGGESTION 4: Collapsible Context (Specific to GSDM tab)
     with st.expander("📖 View GSDM Terrain & Moisture Rules"):
         st.markdown("Reference the official [BoM GSDM Guidebook (PDF)](http://www.bom.gov.au/water/designRainfalls/document/GSDM.pdf) for the required inputs. See Section 3 for terrain classification rules.")
     
@@ -430,7 +436,6 @@ with tab_short:
         else:
             st.warning("Please enter a Catchment ID.")
 
-    # Render GSDM results from session state (persists during downloads)
     if st.session_state.gsdm_results is not None:
         res = st.session_state.gsdm_results
         cid = res["catchment_id"]
@@ -445,7 +450,19 @@ with tab_short:
         df_gsdm = pd.DataFrame(list(final_gsdm.items()), columns=['Duration', 'Depth (mm)'])
         st.table(df_gsdm)
         
-        # --- EXPORT SECTION ---
+        # Interactive Plotly Chart
+        fig = px.line(df_gsdm, x='Duration', y='Depth (mm)', markers=True, title="PMP Depth vs. Duration")
+        fig.update_traces(line_color='#ef4444', marker=dict(size=8))
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # Interactive Folium Map
+        st.markdown("### Catchment Location")
+        catchment_geo = res["catchment"]
+        centroid = catchment_geo.to_crs(epsg=4326).geometry.iloc[0].centroid
+        m = folium.Map(location=[centroid.y, centroid.x], zoom_start=10)
+        folium.GeoJson(catchment_geo).add_to(m)
+        st_folium(m, width=720, height=400)
+        
         st.markdown("### 📥 Export Results")
         col_csv, col_gis, col_pdf = st.columns(3)
         
