@@ -176,22 +176,28 @@ def load_custom_catchment(uploaded_file):
             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
                 zip_ref.extractall(extract_dir)
             
-            # Search for the .shp file, explicitly skipping hidden OS metadata files
-            target_file = None
+            # Gather all valid shapefiles in the zip
+            valid_shps = []
             for root, dirs, files in os.walk(extract_dir):
                 if "__MACOSX" in root:
                     continue
                 for file in files:
                     if file.lower().endswith('.shp') and not file.startswith('._') and not file.startswith('.'):
-                        target_file = os.path.join(root, file)
-                        break
-                if target_file:
-                    break
-                    
-            if not target_file:
+                        valid_shps.append(os.path.join(root, file))
+                        
+            if not valid_shps:
                 raise ValueError("No valid .shp file found inside the uploaded zip archive.")
                 
-            catchment = gpd.read_file(target_file)
+            # Iterate through shapefiles to find the one containing Polygons (ignoring Points/Lines)
+            catchment = None
+            for shp_path in valid_shps:
+                temp_gdf = gpd.read_file(shp_path)
+                if not temp_gdf.empty and temp_gdf.geom_type.isin(['Polygon', 'MultiPolygon']).any():
+                    catchment = temp_gdf
+                    break
+                    
+            if catchment is None:
+                raise ValueError("The uploaded shapefiles only contain Points or Lines. PMP calculations require Polygon areas.")
     else:
         raise ValueError("Unsupported file format. Please upload a .geojson or .zip (Shapefile).")
         
