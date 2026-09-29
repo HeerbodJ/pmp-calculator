@@ -1,20 +1,3 @@
-import plotly.express as px
-
-# Below your st.table(df_pmp) or replacing it:
-fig = px.line(df_pmp, x='Duration', y='Depth (mm)', markers=True, 
-              title="PMP Depth vs. Duration")
-fig.update_traces(line_color='#ef4444', marker=dict(size=8))
-st.plotly_chart(fig, use_container_width=True)
-
-import folium
-from streamlit_folium import st_folium
-
-# After fetching the catchment in your calculation block:
-st.markdown("### Catchment Location")
-centroid = catchment.geometry.iloc[0].centroid
-m = folium.Map(location=[centroid.y, centroid.x], zoom_start=10)
-folium.GeoJson(catchment).add_to(m)
-st_folium(m, width=720, height=400)
 streamlit
 geopandas
 rasterio
@@ -26,3 +9,6 @@ xlrd
 openpyxl
 pyogrio
 fpdf2
+plotly
+folium
+streamlit-folium
