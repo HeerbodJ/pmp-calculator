@@ -274,6 +274,40 @@ def create_pdf(cid, tool, metadata, pmp_dict):
         pdf.cell(0, 8, text=f"  - {dur}: {depth} mm", new_x="LMARGIN", new_y="NEXT")
     return bytes(pdf.output())
 
+def create_interactive_map(catchment_geo):
+    # Reproject to WGS84 for web mapping
+    catchment_wgs84 = catchment_geo.to_crs(epsg=4326)
+    centroid = catchment_wgs84.geometry.iloc[0].centroid
+    
+    # Initialize map without a default basemap
+    m = folium.Map(location=[centroid.y, centroid.x], zoom_start=10, tiles=None)
+    
+    # Add High-Res Satellite and Street basemaps
+    folium.TileLayer(
+        tiles='https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+        attr='Esri',
+        name='Satellite View',
+        overlay=False
+    ).add_to(m)
+    folium.TileLayer('OpenStreetMap', name='Street View', overlay=False).add_to(m)
+    
+    # Add catchment with semi-transparent red styling
+    folium.GeoJson(
+        catchment_wgs84,
+        name='Catchment Boundary',
+        style_function=lambda x: {
+            'fillColor': '#ef4444', 
+            'color': '#ef4444', 
+            'weight': 2, 
+            'fillOpacity': 0.4
+        }
+    ).add_to(m)
+    
+    # Add the layer toggle menu to the top right
+    folium.LayerControl().add_to(m)
+    
+    return m
+
 # --- 4. CALCULATION FUNCTIONS ---
 def calculate_automated_pmp(catchment):
     if not MASTER_PMP_ZONES_SHP:
@@ -454,11 +488,9 @@ with tab_long:
         st.plotly_chart(fig, use_container_width=True)
         
         st.markdown("### Catchment Location")
-        catchment_geo = results['Catchment_Geo']
-        centroid = catchment_geo.to_crs(epsg=4326).geometry.iloc[0].centroid
-        m = folium.Map(location=[centroid.y, centroid.x], zoom_start=10)
-        folium.GeoJson(catchment_geo).add_to(m)
-        st_folium(m, width=720, height=400)
+        catchment_geo = res["catchment"]
+        m = create_interactive_map(catchment_geo)
+        st_folium(m, width=720, height=400, returned_objects=[])
         
         st.markdown("### 📥 Export Results")
         col_csv, col_gis, col_pdf = st.columns(3)
@@ -535,12 +567,10 @@ with tab_short:
         fig.update_traces(line_color='#ef4444', marker=dict(size=8))
         st.plotly_chart(fig, use_container_width=True)
         
-        st.markdown("### Catchment Location")
-        catchment_geo = res["catchment"]
-        centroid = catchment_geo.to_crs(epsg=4326).geometry.iloc[0].centroid
-        m = folium.Map(location=[centroid.y, centroid.x], zoom_start=10)
-        folium.GeoJson(catchment_geo).add_to(m)
-        st_folium(m, width=720, height=400)
+       st.markdown("### Catchment Location")
+        catchment_geo = results['Catchment_Geo']
+        m = create_interactive_map(catchment_geo)
+        st_folium(m, width=720, height=400, returned_objects=[])
         
         st.markdown("### 📥 Export Results")
         col_csv, col_gis, col_pdf = st.columns(3)
