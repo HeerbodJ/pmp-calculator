@@ -321,12 +321,18 @@ with st.sidebar:
 
 st.title("PMP Calculator")
 st.markdown("Calculate GSAM, GTSMR, and GSDM instantly.")
-st.info("🔍 **Need a Catchment ID?** Find your target HydroID or SegmentNo using the official [BoM Geofabric Portal](https://portal.wsapi.cloud.bom.gov.au/arcgis/apps/sites/#/australian-water-data-service/datasets/35719064c4ea4ad79faa82f5c9c22068/explore?layer=7&location=-26.540734%2C136.026183%2C5.02) or by exploring the Catchment layers on [NationalMap](https://nationalmap.gov.au/).")
 
-tool = st.selectbox("Select a tool:", ["Long-Duration PMP (GSAM / GTSMR)", "Short-Duration PMP (GSDM)"])
+# SUGGESTION 4: Collapsible Context (Global)
+with st.expander("🔍 Need help finding your Catchment ID?"):
+    st.markdown("Find your target HydroID or SegmentNo using the official [BoM Geofabric Portal](https://portal.wsapi.cloud.bom.gov.au/arcgis/apps/sites/#/australian-water-data-service/datasets/35719064c4ea4ad79faa82f5c9c22068/explore?layer=7&location=-26.540734%2C136.026183%2C5.02) or by exploring the Catchment layers on [NationalMap](https://nationalmap.gov.au/).")
+
+# Shared input so the user doesn't have to retype it when switching tabs
 catchment_id = st.text_input("Enter Geofabric Catchment ID:")
 
-if tool == "Long-Duration PMP (GSAM / GTSMR)":
+# SUGGESTION 3: Tabbed Navigation
+tab_long, tab_short = st.tabs(["Long-Duration PMP (GSAM / GTSMR)", "Short-Duration PMP (GSDM)"])
+
+with tab_long:
     if st.button("Calculate Long-Duration PMP", type="primary"):
         if catchment_id:
             with st.spinner("Processing geospatial data..."):
@@ -376,12 +382,13 @@ if tool == "Long-Duration PMP (GSAM / GTSMR)":
         geojson_data = create_geojson(results['Catchment_Geo'], meta_dict, results['PMP (mm)'])
         col_gis.download_button("Download GIS Boundary", data=geojson_data, file_name=f"Catchment_{cid}.geojson", mime="application/geo+json", key="long_gis")
         
-        pdf_data = create_pdf(cid, tool, meta_dict, results['PMP (mm)'])
+        pdf_data = create_pdf(cid, "Long-Duration PMP (GSAM / GTSMR)", meta_dict, results['PMP (mm)'])
         col_pdf.download_button("Download PDF Report", data=pdf_data, file_name=f"PMP_Report_{cid}.pdf", mime="application/pdf", key="long_pdf")
 
-elif tool == "Short-Duration PMP (GSDM)":
-    st.markdown("### Catchment Details")
-    st.markdown("📖 *Reference the official [BoM GSDM Guidebook (PDF)](http://www.bom.gov.au/water/designRainfalls/document/GSDM.pdf) for the required inputs below.*")
+with tab_short:
+    # SUGGESTION 4: Collapsible Context (Specific to GSDM tab)
+    with st.expander("📖 View GSDM Terrain & Moisture Rules"):
+        st.markdown("Reference the official [BoM GSDM Guidebook (PDF)](http://www.bom.gov.au/water/designRainfalls/document/GSDM.pdf) for the required inputs. See Section 3 for terrain classification rules.")
     
     col1, col2 = st.columns(2)
     with col1:
@@ -389,7 +396,6 @@ elif tool == "Short-Duration PMP (GSDM)":
         elev_input = st.number_input("Mean Elevation (m)", min_value=0, value=500)
     with col2:
         r_percent = st.slider("Percentage of ROUGH terrain (%)", 0, 100, 0) / 100
-        st.caption("See Guidebook Section 3 for terrain classification rules.")
         
     if st.button("Calculate Short-Duration PMP", type="primary"):
         if catchment_id:
@@ -455,5 +461,5 @@ elif tool == "Short-Duration PMP (GSDM)":
         geojson_data = create_geojson(res["catchment"], meta_dict, final_gsdm)
         col_gis.download_button("Download GIS Boundary", data=geojson_data, file_name=f"Catchment_{cid}.geojson", mime="application/geo+json", key="gsdm_gis")
         
-        pdf_data = create_pdf(cid, tool, meta_dict, final_gsdm)
+        pdf_data = create_pdf(cid, "Short-Duration PMP (GSDM)", meta_dict, final_gsdm)
         col_pdf.download_button("Download PDF Report", data=pdf_data, file_name=f"GSDM_Report_{cid}.pdf", mime="application/pdf", key="gsdm_pdf")
