@@ -519,8 +519,8 @@ with tab_long:
         st.markdown("### Catchment Location")
         catchment_geo = results['Catchment_Geo']
         m = create_interactive_map(catchment_geo)
-        st_folium(m, width=720, height=400, returned_objects=[])
-        
+        st_folium(m, width=720, height=400, returned_objects=[], key="map_long")
+                
         st.markdown("### 📥 Export Results")
         col_csv, col_gis, col_pdf = st.columns(3)
         
@@ -629,7 +629,7 @@ with tab_short:
         st.markdown("### Catchment Location")
         catchment_geo = res["catchment"]
         m = create_interactive_map(catchment_geo)
-        st_folium(m, width=720, height=400, returned_objects=[])
+        st_folium(m, width=720, height=400, returned_objects=[], key="map_short")
         
         st.markdown("### 📥 Export Results")
         col_csv, col_gis, col_pdf = st.columns(3)
