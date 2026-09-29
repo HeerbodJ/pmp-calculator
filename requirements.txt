@@ -1,3 +1,11 @@
+import plotly.express as px
+
+# Below your st.table(df_pmp) or replacing it:
+fig = px.line(df_pmp, x='Duration', y='Depth (mm)', markers=True, 
+              title="PMP Depth vs. Duration")
+fig.update_traces(line_color='#ef4444', marker=dict(size=8))
+st.plotly_chart(fig, use_container_width=True)
+
 import folium
 from streamlit_folium import st_folium
 
