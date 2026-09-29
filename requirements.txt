@@ -1,3 +1,12 @@
+import folium
+from streamlit_folium import st_folium
+
+# After fetching the catchment in your calculation block:
+st.markdown("### Catchment Location")
+centroid = catchment.geometry.iloc[0].centroid
+m = folium.Map(location=[centroid.y, centroid.x], zoom_start=10)
+folium.GeoJson(catchment).add_to(m)
+st_folium(m, width=720, height=400)
 streamlit
 geopandas
 rasterio
