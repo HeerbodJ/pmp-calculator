@@ -124,7 +124,6 @@ def fetch_catchment_from_geofabric(catchment_input):
                 
         catchment = gpd.GeoDataFrame.from_features(data["features"])
         catchment.set_crs(epsg=4326, inplace=True) 
-        return catchment
         
     except Exception:
         if not LOCAL_GEOFABRIC_DB or not Path(LOCAL_GEOFABRIC_DB).exists():
@@ -140,7 +139,16 @@ def fetch_catchment_from_geofabric(catchment_input):
         if catchment.crs is None:
             catchment.set_crs(epsg=4283, inplace=True)
         catchment = catchment.to_crs(epsg=4326)
-        return catchment
+
+    # UNIVERSAL FIX: Sanitize all columns to remove Timestamps for Folium maps and JSON exports
+    for col in catchment.columns:
+        if col != catchment.geometry.name:
+            if pd.api.types.is_datetime64_any_dtype(catchment[col]):
+                catchment[col] = catchment[col].astype(str)
+            elif catchment[col].dtype == 'object':
+                catchment[col] = catchment[col].apply(lambda x: str(x) if isinstance(x, pd.Timestamp) else x)
+                
+    return catchment
 
 def find_dad_file_in_cd(cd_root_path, zone_name):
     cd_path = Path(cd_root_path)
