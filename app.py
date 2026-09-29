@@ -10,6 +10,7 @@ import requests
 import gdown
 import zipfile
 import os
+import tempfile
 from fpdf import FPDF
 import plotly.express as px
 import folium
@@ -100,46 +101,7 @@ gsdm_smooth_df = pd.DataFrame(GSDM_SMOOTH_DATA, index=GSDM_AREAS, columns=GSDM_D
 gsdm_rough_df = pd.DataFrame(GSDM_ROUGH_DATA, index=GSDM_AREAS, columns=GSDM_DURATIONS)
 
 # --- 3. HELPER & EXPORT FUNCTIONS ---
-def fetch_catchment_from_geofabric(catchment_input):
-    try:
-        catchment_id = int(str(catchment_input).strip(' "\''))
-    except ValueError:
-        raise ValueError("Input must be a valid Catchment ID number.")
-        
-    base_url = "https://hosting.wsapi.cloud.bom.gov.au/arcgis/rest/services/ahgf/Geofabric_V3x_All_Products/FeatureServer/7/query"
-    headers = {'User-Agent': 'Mozilla/5.0'}
-    params = {'where': f"SegmentNo={catchment_id}", 'outFields': '*', 'returnGeometry': 'true', 'f': 'geojson'}
-    
-    try:
-        response = requests.get(base_url, params=params, headers=headers, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-        
-        if "error" in data or "features" not in data or len(data["features"]) == 0:
-            params['where'] = f"HydroID={catchment_id}"
-            response = requests.get(base_url, params=params, headers=headers, timeout=10)
-            data = response.json()
-            if "error" in data or "features" not in data or len(data["features"]) == 0:
-                raise ValueError(f"Could not find catchment ID {catchment_id} in Geofabric API.")
-                
-        catchment = gpd.GeoDataFrame.from_features(data["features"])
-        catchment.set_crs(epsg=4326, inplace=True) 
-        
-    except Exception:
-        if not LOCAL_GEOFABRIC_DB or not Path(LOCAL_GEOFABRIC_DB).exists():
-            raise FileNotFoundError("BoM API is blocked, and the offline database could not be found. Check System Diagnostics.")
-            
-        catchment = gpd.read_file(LOCAL_GEOFABRIC_DB, layer='AHGFCatchment', where=f"SegmentNo={catchment_id}", engine="pyogrio")
-        if catchment.empty:
-            catchment = gpd.read_file(LOCAL_GEOFABRIC_DB, layer='AHGFCatchment', where=f"HydroID={catchment_id}", engine="pyogrio")
-            
-        if catchment.empty:
-            raise ValueError(f"Could not find Catchment ID {catchment_id} in the local offline database.")
-             
-        if catchment.crs is None:
-            catchment.set_crs(epsg=4283, inplace=True)
-        catchment = catchment.to_crs(epsg=4326)
-
+def sanitize_catchment(catchment):
     # UNIVERSAL FIX: Sanitize all columns to remove Timestamps for Folium maps and JSON exports
     for col in catchment.columns:
         if col != catchment.geometry.name:
@@ -147,8 +109,82 @@ def fetch_catchment_from_geofabric(catchment_input):
                 catchment[col] = catchment[col].astype(str)
             elif catchment[col].dtype == 'object':
                 catchment[col] = catchment[col].apply(lambda x: str(x) if isinstance(x, pd.Timestamp) else x)
-                
     return catchment
+
+def fetch_catchment_from_geofabric(catchment_input, layer_type="AHGFCatchment"):
+    try:
+        catchment_id = int(str(catchment_input).strip(' "\''))
+    except ValueError:
+        raise ValueError("Input must be a valid numeric ID.")
+        
+    api_layer = "34" if layer_type == "NCBLevel2DrainageBasinGroup" else "7"
+    base_url = f"https://hosting.wsapi.cloud.bom.gov.au/arcgis/rest/services/ahgf/Geofabric_V3x_All_Products/FeatureServer/{api_layer}/query"
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    
+    # Try HydroID first (standard for both layers)
+    params = {'where': f"HydroID={catchment_id}", 'outFields': '*', 'returnGeometry': 'true', 'f': 'geojson'}
+    
+    try:
+        response = requests.get(base_url, params=params, headers=headers, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        
+        # If no result and looking for layer 7, fallback to SegmentNo
+        if ("error" in data or "features" not in data or len(data["features"]) == 0) and layer_type == "AHGFCatchment":
+            params['where'] = f"SegmentNo={catchment_id}"
+            response = requests.get(base_url, params=params, headers=headers, timeout=10)
+            data = response.json()
+            
+        if "error" in data or "features" not in data or len(data["features"]) == 0:
+            raise ValueError(f"Could not find ID {catchment_id} in Geofabric API.")
+            
+        catchment = gpd.GeoDataFrame.from_features(data["features"])
+        catchment.set_crs(epsg=4326, inplace=True) 
+        
+    except Exception:
+        if not LOCAL_GEOFABRIC_DB or not Path(LOCAL_GEOFABRIC_DB).exists():
+            raise FileNotFoundError("BoM API is blocked, and the offline database could not be found.")
+            
+        try:
+            catchment = gpd.read_file(LOCAL_GEOFABRIC_DB, layer=layer_type, where=f"HydroID={catchment_id}", engine="pyogrio")
+            if catchment.empty and layer_type == "AHGFCatchment":
+                catchment = gpd.read_file(LOCAL_GEOFABRIC_DB, layer=layer_type, where=f"SegmentNo={catchment_id}", engine="pyogrio")
+        except Exception:
+            catchment = gpd.GeoDataFrame()
+            
+        if catchment.empty:
+            raise ValueError(f"Could not find ID {catchment_id} in the local offline database ({layer_type}).")
+             
+        if catchment.crs is None:
+            catchment.set_crs(epsg=4283, inplace=True)
+        catchment = catchment.to_crs(epsg=4326)
+
+    return sanitize_catchment(catchment)
+
+def load_custom_catchment(uploaded_file):
+    file_ext = uploaded_file.name.split('.')[-1].lower()
+    
+    if file_ext == "geojson":
+        catchment = gpd.read_file(uploaded_file)
+    elif file_ext == "zip":
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zip_path = os.path.join(tmpdir, uploaded_file.name)
+            with open(zip_path, "wb") as f:
+                f.write(uploaded_file.getbuffer())
+            catchment = gpd.read_file(f"zip://{zip_path}")
+    else:
+        raise ValueError("Unsupported file format. Please upload a .geojson or .zip (Shapefile).")
+        
+    if catchment.crs is None:
+        raise ValueError("Uploaded file has no Coordinate Reference System (CRS) defined. Ensure your file has projection data.")
+        
+    # If the user uploads a file with multiple smaller catchments, dissolve them into one total area
+    if len(catchment) > 1:
+        catchment['dissolve_field'] = 1
+        catchment = catchment.dissolve(by='dissolve_field').reset_index(drop=True)
+        
+    catchment = catchment.to_crs(epsg=4326)
+    return sanitize_catchment(catchment)
 
 def find_dad_file_in_cd(cd_root_path, zone_name):
     cd_path = Path(cd_root_path)
@@ -175,54 +211,37 @@ def create_csv(pmp_dict):
 
 def create_geojson(catchment_gdf, metadata_dict, pmp_dict):
     gdf = catchment_gdf.copy()
-    
-    for col in gdf.columns:
-        if col != gdf.geometry.name:
-            if pd.api.types.is_datetime64_any_dtype(gdf[col]):
-                gdf[col] = gdf[col].astype(str)
-            elif gdf[col].dtype == 'object':
-                gdf[col] = gdf[col].apply(lambda x: str(x) if isinstance(x, pd.Timestamp) else x)
-
     for key, val in metadata_dict.items():
         gdf[key] = val
     for dur, depth in pmp_dict.items():
         col_name = f"PMP_{dur.replace(' ', '')}"
         gdf[col_name] = depth
-        
     return gdf.to_json()
 
 def create_pdf(cid, tool, metadata, pmp_dict):
     pdf = FPDF()
     pdf.add_page()
-    
     pdf.set_font("helvetica", size=16, style="B")
     pdf.cell(0, 10, text="BoM PMP Calculation Report", new_x="LMARGIN", new_y="NEXT", align='C')
     pdf.cell(0, 10, text="", new_x="LMARGIN", new_y="NEXT") 
-    
     pdf.set_font("helvetica", size=12)
-    pdf.cell(0, 10, text=f"Catchment ID: {cid}", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 10, text=f"Catchment ID / File: {cid}", new_x="LMARGIN", new_y="NEXT")
     pdf.cell(0, 10, text=f"Calculation Method: {tool}", new_x="LMARGIN", new_y="NEXT")
-    
     for key, val in metadata.items():
         pdf.cell(0, 10, text=f"{key}: {val}", new_x="LMARGIN", new_y="NEXT")
-        
     pdf.cell(0, 10, text="", new_x="LMARGIN", new_y="NEXT") 
-    
     pdf.set_font("helvetica", size=12, style="B")
     pdf.cell(0, 10, text="Final PMP Depths:", new_x="LMARGIN", new_y="NEXT")
-    
     pdf.set_font("helvetica", size=12)
     for dur, depth in pmp_dict.items():
         pdf.cell(0, 8, text=f"  - {dur}: {depth} mm", new_x="LMARGIN", new_y="NEXT")
-        
     return bytes(pdf.output())
 
 # --- 4. CALCULATION FUNCTIONS ---
-def calculate_automated_pmp(catchment_id):
+def calculate_automated_pmp(catchment):
     if not MASTER_PMP_ZONES_SHP:
         raise FileNotFoundError("Master PMP Zones shapefile is missing. Check System Diagnostics.")
         
-    catchment = fetch_catchment_from_geofabric(catchment_id)
     catchment_albers = catchment.to_crs(epsg=3577) 
     area_km2 = catchment_albers.geometry.area.sum() / 1e6
     catchment_centroid = catchment_albers.geometry.centroid.iloc[0]
@@ -329,28 +348,53 @@ with st.sidebar:
 st.title("PMP Calculator")
 st.markdown("Calculate GSAM, GTSMR, and GSDM instantly.")
 
-with st.expander("🔍 Need help finding your Catchment ID?"):
-    st.markdown("Find your target HydroID or SegmentNo using the official [BoM Geofabric Portal](https://portal.wsapi.cloud.bom.gov.au/arcgis/apps/sites/#/australian-water-data-service/datasets/35719064c4ea4ad79faa82f5c9c22068/explore?layer=7&location=-26.540734%2C136.026183%2C5.02) or by exploring the Catchment layers on [NationalMap](https://nationalmap.gov.au/).")
+# --- INPUT METHOD UI ---
+st.markdown("### 1. Define Catchment Boundary")
+input_method = st.radio("Select input method:", 
+    ["Sub-Catchment (Geofabric SH_Network)", 
+     "Drainage Basin (Geofabric NCBLevel2)", 
+     "Upload Custom GIS File (.geojson or .zip)"],
+    horizontal=True, label_visibility="collapsed")
 
-catchment_id = st.text_input("Enter Geofabric Catchment ID:")
+catchment_id_input = None
+uploaded_file = None
+cid_display = "Custom_Boundary"
 
+if "Sub-Catchment" in input_method:
+    st.info("🔍 Find your target HydroID or SegmentNo using the [BoM Geofabric Portal (Layer 7)](https://portal.wsapi.cloud.bom.gov.au/arcgis/apps/sites/#/australian-water-data-service/datasets/35719064c4ea4ad79faa82f5c9c22068/explore?layer=7).")
+    catchment_id_input = st.text_input("Enter Sub-Catchment ID:")
+    if catchment_id_input: cid_display = str(catchment_id_input)
+elif "Drainage Basin" in input_method:
+    st.info("🔍 Find your target HydroID using the [BoM Geofabric Portal (Layer 34)](https://portal.wsapi.cloud.bom.gov.au/arcgis/apps/sites/#/australian-water-data-service/datasets/35719064c4ea4ad79faa82f5c9c22068/explore?layer=34).")
+    catchment_id_input = st.text_input("Enter Drainage Basin HydroID:")
+    if catchment_id_input: cid_display = str(catchment_id_input)
+else:
+    st.info("Upload your own catchment boundary. If your file contains multiple polygons, they will be dissolved into a single unified area.")
+    uploaded_file = st.file_uploader("Upload Geometry", type=['geojson', 'zip'])
+    if uploaded_file: cid_display = uploaded_file.name.split('.')[0]
+
+st.markdown("### 2. Run Calculation")
 tab_long, tab_short = st.tabs(["Long-Duration PMP (GSAM / GTSMR)", "Short-Duration PMP (GSDM)"])
 
 with tab_long:
     if st.button("Calculate Long-Duration PMP", type="primary"):
-        if catchment_id:
-            with st.spinner("Processing geospatial data..."):
-                try:
-                    res = calculate_automated_pmp(catchment_id)
-                    st.session_state.long_pmp_results = {
-                        "results": res,
-                        "catchment_id": catchment_id
-                    }
-                except Exception as e:
-                    st.error(f"Error: {e}")
-                    st.session_state.long_pmp_results = None
-        else:
-            st.warning("Please enter a Catchment ID.")
+        with st.spinner("Processing geospatial data..."):
+            try:
+                if "Sub-Catchment" in input_method:
+                    if not catchment_id_input: raise ValueError("Please enter a Catchment ID.")
+                    catchment_gdf = fetch_catchment_from_geofabric(catchment_id_input, "AHGFCatchment")
+                elif "Drainage Basin" in input_method:
+                    if not catchment_id_input: raise ValueError("Please enter a Basin ID.")
+                    catchment_gdf = fetch_catchment_from_geofabric(catchment_id_input, "NCBLevel2DrainageBasinGroup")
+                else:
+                    if not uploaded_file: raise ValueError("Please upload a file.")
+                    catchment_gdf = load_custom_catchment(uploaded_file)
+
+                res = calculate_automated_pmp(catchment_gdf)
+                st.session_state.long_pmp_results = {"results": res, "catchment_id": cid_display}
+            except Exception as e:
+                st.error(f"Error: {e}")
+                st.session_state.long_pmp_results = None
 
     if st.session_state.long_pmp_results is not None:
         results = st.session_state.long_pmp_results["results"]
@@ -368,12 +412,10 @@ with tab_long:
         df_pmp = pd.DataFrame(list(results['PMP (mm)'].items()), columns=['Duration', 'Depth (mm)'])
         st.table(df_pmp)
         
-        # Interactive Plotly Chart
         fig = px.line(df_pmp, x='Duration', y='Depth (mm)', markers=True, title="PMP Depth vs. Duration")
         fig.update_traces(line_color='#ef4444', marker=dict(size=8))
         st.plotly_chart(fig, use_container_width=True)
         
-        # Interactive Folium Map
         st.markdown("### Catchment Location")
         catchment_geo = results['Catchment_Geo']
         centroid = catchment_geo.to_crs(epsg=4326).geometry.iloc[0].centroid
@@ -387,13 +429,7 @@ with tab_long:
         csv_data = create_csv(results['PMP (mm)'])
         col_csv.download_button("Download CSV", data=csv_data, file_name=f"PMP_{cid}.csv", mime="text/csv", key="long_csv")
         
-        meta_dict = {
-            "Area_km2": results["Area (km2)"], 
-            "Zone": results["Zone"], 
-            "Method": results["Method"], 
-            "MAF": results["MAF"], 
-            "TAF": results["TAF"]
-        }
+        meta_dict = {"Area_km2": results["Area (km2)"], "Zone": results["Zone"], "Method": results["Method"], "MAF": results["MAF"], "TAF": results["TAF"]}
         geojson_data = create_geojson(results['Catchment_Geo'], meta_dict, results['PMP (mm)'])
         col_gis.download_button("Download GIS Boundary", data=geojson_data, file_name=f"Catchment_{cid}.geojson", mime="application/geo+json", key="long_gis")
         
@@ -412,37 +448,37 @@ with tab_short:
         r_percent = st.slider("Percentage of ROUGH terrain (%)", 0, 100, 0) / 100
         
     if st.button("Calculate Short-Duration PMP", type="primary"):
-        if catchment_id:
-            with st.spinner("Processing GSDM..."):
-                try:
-                    catchment = fetch_catchment_from_geofabric(catchment_id)
-                    area_km2 = catchment.to_crs(epsg=3577).geometry.area.sum() / 1e6
-                    
-                    eaf_value = 1.0 if elev_input <= 1500 else 1.0 - (((elev_input - 1500) / 300) * 0.05)
-                    s_percent = 1.0 - r_percent
-                    target_log_area = np.log10(max(1.0, min(area_km2, 1000.0)))
-                    log_areas = np.log10(gsdm_smooth_df.index)
-                    
-                    final_gsdm = {}
-                    for dur in GSDM_DURATIONS:
-                        ds_val = float(interp1d(log_areas, gsdm_smooth_df[dur], kind='linear', fill_value='extrapolate')(target_log_area))
-                        dr_val = float(interp1d(log_areas, gsdm_rough_df[dur], kind='linear', fill_value='extrapolate')(target_log_area))
-                        final_gsdm[f"{dur} Hours"] = round((s_percent * ds_val + r_percent * dr_val) * maf_input * eaf_value, 1)
-                    
-                    st.session_state.gsdm_results = {
-                        "final_gsdm": final_gsdm,
-                        "catchment": catchment,
-                        "area_km2": area_km2,
-                        "maf_input": maf_input,
-                        "eaf_value": eaf_value,
-                        "r_percent": r_percent,
-                        "catchment_id": catchment_id
-                    }
-                except Exception as e:
-                    st.error(f"Error: {e}")
-                    st.session_state.gsdm_results = None
-        else:
-            st.warning("Please enter a Catchment ID.")
+        with st.spinner("Processing GSDM..."):
+            try:
+                if "Sub-Catchment" in input_method:
+                    if not catchment_id_input: raise ValueError("Please enter a Catchment ID.")
+                    catchment_gdf = fetch_catchment_from_geofabric(catchment_id_input, "AHGFCatchment")
+                elif "Drainage Basin" in input_method:
+                    if not catchment_id_input: raise ValueError("Please enter a Basin ID.")
+                    catchment_gdf = fetch_catchment_from_geofabric(catchment_id_input, "NCBLevel2DrainageBasinGroup")
+                else:
+                    if not uploaded_file: raise ValueError("Please upload a file.")
+                    catchment_gdf = load_custom_catchment(uploaded_file)
+
+                area_km2 = catchment_gdf.to_crs(epsg=3577).geometry.area.sum() / 1e6
+                eaf_value = 1.0 if elev_input <= 1500 else 1.0 - (((elev_input - 1500) / 300) * 0.05)
+                s_percent = 1.0 - r_percent
+                target_log_area = np.log10(max(1.0, min(area_km2, 1000.0)))
+                log_areas = np.log10(gsdm_smooth_df.index)
+                
+                final_gsdm = {}
+                for dur in GSDM_DURATIONS:
+                    ds_val = float(interp1d(log_areas, gsdm_smooth_df[dur], kind='linear', fill_value='extrapolate')(target_log_area))
+                    dr_val = float(interp1d(log_areas, gsdm_rough_df[dur], kind='linear', fill_value='extrapolate')(target_log_area))
+                    final_gsdm[f"{dur} Hours"] = round((s_percent * ds_val + r_percent * dr_val) * maf_input * eaf_value, 1)
+                
+                st.session_state.gsdm_results = {
+                    "final_gsdm": final_gsdm, "catchment": catchment_gdf, "area_km2": area_km2, 
+                    "maf_input": maf_input, "eaf_value": eaf_value, "r_percent": r_percent, "catchment_id": cid_display
+                }
+            except Exception as e:
+                st.error(f"Error: {e}")
+                st.session_state.gsdm_results = None
 
     if st.session_state.gsdm_results is not None:
         res = st.session_state.gsdm_results
@@ -458,12 +494,10 @@ with tab_short:
         df_gsdm = pd.DataFrame(list(final_gsdm.items()), columns=['Duration', 'Depth (mm)'])
         st.table(df_gsdm)
         
-        # Interactive Plotly Chart
         fig = px.line(df_gsdm, x='Duration', y='Depth (mm)', markers=True, title="PMP Depth vs. Duration")
         fig.update_traces(line_color='#ef4444', marker=dict(size=8))
         st.plotly_chart(fig, use_container_width=True)
         
-        # Interactive Folium Map
         st.markdown("### Catchment Location")
         catchment_geo = res["catchment"]
         centroid = catchment_geo.to_crs(epsg=4326).geometry.iloc[0].centroid
@@ -477,12 +511,7 @@ with tab_short:
         csv_data = create_csv(final_gsdm)
         col_csv.download_button("Download CSV", data=csv_data, file_name=f"GSDM_{cid}.csv", mime="text/csv", key="gsdm_csv")
         
-        meta_dict = {
-            "Area_km2": round(area_km2, 2), 
-            "MAF_Input": res["maf_input"], 
-            "EAF": round(res["eaf_value"], 3), 
-            "Rough_Pct": res["r_percent"] * 100
-        }
+        meta_dict = {"Area_km2": round(area_km2, 2), "MAF_Input": res["maf_input"], "EAF": round(res["eaf_value"], 3), "Rough_Pct": res["r_percent"] * 100}
         geojson_data = create_geojson(res["catchment"], meta_dict, final_gsdm)
         col_gis.download_button("Download GIS Boundary", data=geojson_data, file_name=f"Catchment_{cid}.geojson", mime="application/geo+json", key="gsdm_gis")
         
