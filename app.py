@@ -212,6 +212,9 @@ def load_custom_catchment(uploaded_file):
     if catchment.crs is None:
         raise ValueError("Uploaded file has no Coordinate Reference System (CRS) defined. Ensure your zip includes the .prj file.")
         
+    # FIX: Repair invalid geometries (self-intersections) to prevent TopologyExceptions
+    catchment.geometry = catchment.geometry.make_valid()
+        
     # If the user uploads a file with multiple smaller catchments, dissolve them into one total area
     if len(catchment) > 1:
         catchment['dissolve_field'] = 1
