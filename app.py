@@ -481,11 +481,40 @@ with tab_long:
         
         st.subheader("Final PMP Depths")
         df_pmp = pd.DataFrame(list(results['PMP (mm)'].items()), columns=['Duration', 'Depth (mm)'])
-        st.table(df_pmp)
         
-        fig = px.line(df_pmp, x='Duration', y='Depth (mm)', markers=True, title="PMP Depth vs. Duration")
-        fig.update_traces(line_color='#ef4444', marker=dict(size=8))
-        st.plotly_chart(fig, use_container_width=True)
+        # Display static table alongside the interactive chart
+        col_table, col_chart = st.columns([1, 2])
+        with col_table:
+            st.table(df_pmp)
+            
+        with col_chart:
+            # Prepare numeric data and hover metadata for Plotly
+            df_pmp['Duration (hrs)'] = df_pmp['Duration'].str.replace(' Hours', '').astype(float)
+            df_pmp['MAF Applied'] = results['MAF']
+            df_pmp['TAF Applied'] = results['TAF']
+            
+            log_toggle_long = st.checkbox("Logarithmic X-Axis (Duration)", value=False, key="log_long")
+            
+            fig = px.line(
+                df_pmp, 
+                x='Duration (hrs)', 
+                y='Depth (mm)', 
+                markers=True, 
+                title="Long-Duration PMP Curve",
+                hover_data={
+                    'Duration (hrs)': True, 
+                    'Depth (mm)': True, 
+                    'Duration': False, 
+                    'MAF Applied': True, 
+                    'TAF Applied': True
+                }
+            )
+            fig.update_traces(line_color='#ef4444', marker=dict(size=8))
+            
+            if log_toggle_long:
+                fig.update_layout(xaxis_type='log')
+                
+            st.plotly_chart(fig, use_container_width=True)
         
         st.markdown("### Catchment Location")
         catchment_geo = results['Catchment_Geo']
@@ -561,11 +590,41 @@ with tab_short:
         st.success("Calculation Complete!")
         st.metric("Catchment Area", f"{area_km2:.2f} km²")
         df_gsdm = pd.DataFrame(list(final_gsdm.items()), columns=['Duration', 'Depth (mm)'])
-        st.table(df_gsdm)
         
-        fig = px.line(df_gsdm, x='Duration', y='Depth (mm)', markers=True, title="PMP Depth vs. Duration")
-        fig.update_traces(line_color='#ef4444', marker=dict(size=8))
-        st.plotly_chart(fig, use_container_width=True)
+        col_table, col_chart = st.columns([1, 2])
+        with col_table:
+            st.table(df_gsdm)
+            
+        with col_chart:
+            # Prepare numeric data and hover metadata for Plotly
+            df_gsdm['Duration (hrs)'] = df_gsdm['Duration'].str.replace(' Hours', '').astype(float)
+            df_gsdm['MAF Applied'] = res['maf_input']
+            df_gsdm['EAF Applied'] = round(res['eaf_value'], 3)
+            df_gsdm['Rough Terrain (%)'] = res['r_percent'] * 100
+            
+            log_toggle_short = st.checkbox("Logarithmic X-Axis (Duration)", value=False, key="log_short")
+            
+            fig = px.line(
+                df_gsdm, 
+                x='Duration (hrs)', 
+                y='Depth (mm)', 
+                markers=True, 
+                title="Short-Duration PMP Curve",
+                hover_data={
+                    'Duration (hrs)': True, 
+                    'Depth (mm)': True, 
+                    'Duration': False, 
+                    'MAF Applied': True, 
+                    'EAF Applied': True, 
+                    'Rough Terrain (%)': True
+                }
+            )
+            fig.update_traces(line_color='#ef4444', marker=dict(size=8))
+            
+            if log_toggle_short:
+                fig.update_layout(xaxis_type='log')
+                
+            st.plotly_chart(fig, use_container_width=True)
         
         st.markdown("### Catchment Location")
         catchment_geo = res["catchment"]
