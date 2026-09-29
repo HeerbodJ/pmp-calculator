@@ -274,6 +274,20 @@ def create_pdf(cid, tool, metadata, pmp_dict):
         pdf.cell(0, 8, text=f"  - {dur}: {depth} mm", new_x="LMARGIN", new_y="NEXT")
     return bytes(pdf.output())
 
+def create_swmm_timeseries(cid, tool, pmp_dict):
+    lines = [
+        f"; BoM PMP Depth-Duration Curve",
+        f"; Catchment ID: {cid}",
+        f"; Method: {tool}",
+        f"; Format: Duration(Hours)    Depth(mm)"
+    ]
+    for dur_str, depth in pmp_dict.items():
+        # Clean the string to just output the numeric hour and depth
+        dur_val = dur_str.replace(" Hours", "").strip()
+        lines.append(f"{dur_val}\t{depth}")
+        
+    return "\n".join(lines).encode('utf-8')
+
 def create_interactive_map(catchment_geo):
     # Reproject to WGS84 for web mapping
     catchment_wgs84 = catchment_geo.to_crs(epsg=4326)
@@ -522,17 +536,21 @@ with tab_long:
         st_folium(m, width=720, height=400, returned_objects=[], key="map_long")
                 
         st.markdown("### 📥 Export Results")
-        col_csv, col_gis, col_pdf = st.columns(3)
+        col_csv, col_gis, col_pdf, col_swmm = st.columns(4)
         
         csv_data = create_csv(results['PMP (mm)'])
         col_csv.download_button("Download CSV", data=csv_data, file_name=f"PMP_{cid}.csv", mime="text/csv", key="long_csv")
         
         meta_dict = {"Area_km2": results["Area (km2)"], "Zone": results["Zone"], "Method": results["Method"], "MAF": results["MAF"], "TAF": results["TAF"]}
         geojson_data = create_geojson(results['Catchment_Geo'], meta_dict, results['PMP (mm)'])
-        col_gis.download_button("Download GIS Boundary", data=geojson_data, file_name=f"Catchment_{cid}.geojson", mime="application/geo+json", key="long_gis")
+        col_gis.download_button("Download GIS", data=geojson_data, file_name=f"Catchment_{cid}.geojson", mime="application/geo+json", key="long_gis")
         
         pdf_data = create_pdf(cid, "Long-Duration PMP (GSAM / GTSMR)", meta_dict, results['PMP (mm)'])
-        col_pdf.download_button("Download PDF Report", data=pdf_data, file_name=f"PMP_Report_{cid}.pdf", mime="application/pdf", key="long_pdf")
+        col_pdf.download_button("Download PDF", data=pdf_data, file_name=f"PMP_Report_{cid}.pdf", mime="application/pdf", key="long_pdf")
+        
+        # New SWMM / 12d Export
+        swmm_data = create_swmm_timeseries(cid, "Long-Duration PMP (GSAM / GTSMR)", results['PMP (mm)'])
+        col_swmm.download_button("Download SWMM/12d", data=swmm_data, file_name=f"PMP_Curve_{cid}.dat", mime="text/plain", key="long_swmm")
 
 with tab_short:
     with st.expander("📖 View GSDM Terrain & Moisture Rules"):
@@ -632,14 +650,18 @@ with tab_short:
         st_folium(m, width=720, height=400, returned_objects=[], key="map_short")
         
         st.markdown("### 📥 Export Results")
-        col_csv, col_gis, col_pdf = st.columns(3)
+        col_csv, col_gis, col_pdf, col_swmm = st.columns(4)
         
         csv_data = create_csv(final_gsdm)
         col_csv.download_button("Download CSV", data=csv_data, file_name=f"GSDM_{cid}.csv", mime="text/csv", key="gsdm_csv")
         
         meta_dict = {"Area_km2": round(area_km2, 2), "MAF_Input": res["maf_input"], "EAF": round(res["eaf_value"], 3), "Rough_Pct": res["r_percent"] * 100}
         geojson_data = create_geojson(res["catchment"], meta_dict, final_gsdm)
-        col_gis.download_button("Download GIS Boundary", data=geojson_data, file_name=f"Catchment_{cid}.geojson", mime="application/geo+json", key="gsdm_gis")
+        col_gis.download_button("Download GIS", data=geojson_data, file_name=f"Catchment_{cid}.geojson", mime="application/geo+json", key="gsdm_gis")
         
         pdf_data = create_pdf(cid, "Short-Duration PMP (GSDM)", meta_dict, final_gsdm)
-        col_pdf.download_button("Download PDF Report", data=pdf_data, file_name=f"GSDM_Report_{cid}.pdf", mime="application/pdf", key="gsdm_pdf")
+        col_pdf.download_button("Download PDF", data=pdf_data, file_name=f"GSDM_Report_{cid}.pdf", mime="application/pdf", key="gsdm_pdf")
+        
+        # New SWMM / 12d Export
+        swmm_data = create_swmm_timeseries(cid, "Short-Duration PMP (GSDM)", final_gsdm)
+        col_swmm.download_button("Download SWMM/12d", data=swmm_data, file_name=f"GSDM_Curve_{cid}.dat", mime="text/plain", key="gsdm_swmm")
