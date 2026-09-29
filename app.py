@@ -172,31 +172,39 @@ def load_custom_catchment(uploaded_file):
             with open(zip_path, "wb") as f:
                 f.write(uploaded_file.getbuffer())
                 
-            # Extract the zip file to handle nested folders and mixed formats
             extract_dir = os.path.join(tmpdir, "extracted")
             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
                 zip_ref.extractall(extract_dir)
             
-            # Search through the extracted folder to explicitly find the .shp file
+            # Search for the .shp file, explicitly skipping hidden OS metadata files
             target_file = None
             for root, dirs, files in os.walk(extract_dir):
+                if "__MACOSX" in root:
+                    continue
                 for file in files:
-                    if file.lower().endswith('.shp'):
+                    if file.lower().endswith('.shp') and not file.startswith('._') and not file.startswith('.'):
                         target_file = os.path.join(root, file)
                         break
                 if target_file:
                     break
                     
             if not target_file:
-                raise ValueError("No .shp file found inside the uploaded zip archive.")
+                raise ValueError("No valid .shp file found inside the uploaded zip archive.")
                 
-            # Read the explicitly found shapefile
             catchment = gpd.read_file(target_file)
     else:
         raise ValueError("Unsupported file format. Please upload a .geojson or .zip (Shapefile).")
         
+    # --- SAFETY CHECKS ---
+    if catchment.empty:
+        raise ValueError("The uploaded shapefile was found, but it contains no features (it is empty).")
+        
+    catchment = catchment[~catchment.geometry.is_empty & catchment.geometry.notnull()]
+    if catchment.empty:
+        raise ValueError("The uploaded shapefile contains no valid geographic polygons.")
+        
     if catchment.crs is None:
-        raise ValueError("Uploaded file has no Coordinate Reference System (CRS) defined. Ensure your file has projection data.")
+        raise ValueError("Uploaded file has no Coordinate Reference System (CRS) defined. Ensure your zip includes the .prj file.")
         
     # If the user uploads a file with multiple smaller catchments, dissolve them into one total area
     if len(catchment) > 1:
