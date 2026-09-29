@@ -488,7 +488,7 @@ with tab_long:
         st.plotly_chart(fig, use_container_width=True)
         
         st.markdown("### Catchment Location")
-        catchment_geo = res["catchment"]
+        catchment_geo = results['Catchment_Geo']
         m = create_interactive_map(catchment_geo)
         st_folium(m, width=720, height=400, returned_objects=[])
         
@@ -567,8 +567,8 @@ with tab_short:
         fig.update_traces(line_color='#ef4444', marker=dict(size=8))
         st.plotly_chart(fig, use_container_width=True)
         
-       st.markdown("### Catchment Location")
-        catchment_geo = results['Catchment_Geo']
+        st.markdown("### Catchment Location")
+        catchment_geo = res["catchment"]
         m = create_interactive_map(catchment_geo)
         st_folium(m, width=720, height=400, returned_objects=[])
         
