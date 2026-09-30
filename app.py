@@ -290,23 +290,24 @@ def create_swmm_timeseries(cid, tool, pmp_dict):
     return "\n".join(lines).encode('utf-8')
 
 def fetch_bom_ifd(lat, lon):
-    # Construct the hidden API URL used by the BoM IFD portal
-    url = f"http://www.bom.gov.au/water/designRainfalls/revised-ifd/?year=2016&coordinate_type=dd&latitude={lat}&longitude={lon}&sdmin=true&sdhr=true&sdday=true&csv=true"
+    # Enforce HTTPS to prevent BoM redirecting to an HTML warning page
+    url = f"https://www.bom.gov.au/water/designRainfalls/revised-ifd/?year=2016&coordinate_type=dd&latitude={lat}&longitude={lon}&sdmin=true&sdhr=true&sdday=true&csv=true"
     headers = {'User-Agent': 'Mozilla/5.0'}
     
     response = requests.get(url, headers=headers, timeout=15)
     response.raise_for_status()
     
-    # The BoM CSV contains several rows of metadata at the top. 
-    # We must scan down to find the row that starts with "Duration" to isolate the actual data table.
+    # Use 'in' rather than 'startswith' to account for double quotes in the CSV (e.g., '"Duration"')
     lines = response.text.split('\n')
     start_idx = 0
     for i, line in enumerate(lines):
-        if line.startswith("Duration"):
+        if "Duration" in line and "EY" in line:
             start_idx = i
             break
             
     if start_idx == 0:
+        # Fallback to show the raw response if BoM completely changes their format
+        st.error(f"BoM API Diagnostic Snippet: {response.text[:500]}")
         raise ValueError("Could not find valid rainfall data in the BoM response.")
         
     # Read the cleaned data into a Pandas DataFrame
