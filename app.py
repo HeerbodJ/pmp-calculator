@@ -781,8 +781,10 @@ elif "IFD" in app_mode:
         ifd_uploaded_file = None
         
         if "Sub-Catchment" in ifd_gis_method:
+            st.info("🔍 Find your target HydroID or SegmentNo using the [BoM Geofabric Portal (Layer 7)](https://portal.wsapi.cloud.bom.gov.au/arcgis/apps/sites/#/australian-water-data-service/datasets/35719064c4ea4ad79faa82f5c9c22068/explore?layer=7).")
             ifd_catchment_id = st.text_input("Enter Sub-Catchment ID:", key="ifd_sub_id")
         elif "Drainage Basin" in ifd_gis_method:
+            st.info("🔍 Find your target HydroID using the [BoM Geofabric Portal (Layer 34)](https://portal.wsapi.cloud.bom.gov.au/arcgis/apps/sites/#/australian-water-data-service/datasets/35719064c4ea4ad79faa82f5c9c22068/explore?layer=34).")
             ifd_catchment_id = st.text_input("Enter Drainage Basin HydroID:", key="ifd_basin_id")
         else:
             ifd_uploaded_file = st.file_uploader("Upload Geometry", type=['geojson', 'zip'], key="ifd_upload")
