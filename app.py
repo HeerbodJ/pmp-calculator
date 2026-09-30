@@ -290,40 +290,41 @@ def create_swmm_timeseries(cid, tool, pmp_dict):
     return "\n".join(lines).encode('utf-8')
 
 def fetch_bom_ifd(lat, lon):
-    # Enforce HTTPS and remove the csv=true parameter since BoM is returning a webpage
     url = f"https://www.bom.gov.au/water/designRainfalls/revised-ifd/?year=2016&coordinate_type=dd&latitude={lat}&longitude={lon}&sdmin=true&sdhr=true&sdday=true"
-    headers = {'User-Agent': 'Mozilla/5.0'}
+    # Upgrade the headers to look exactly like a modern Windows Chrome browser
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
+    }
     
-    response = requests.get(url, headers=headers, timeout=15)
-    response.raise_for_status()
+    try:
+        # Doubled the timeout to 30 seconds to accommodate BoM server lag
+        response = requests.get(url, headers=headers, timeout=30)
+        response.raise_for_status()
+    except requests.exceptions.Timeout:
+        raise ValueError("The Bureau of Meteorology server timed out. This often happens if the BoM server is under heavy load, or if Streamlit's overseas servers are being delayed by BoM's geofencing. Please click download again.")
+    except Exception as e:
+        raise ValueError(f"Connection failed: {e}")
     
-    # Use pandas to automatically parse all HTML tables found on the BoM webpage
     try:
         tables = pd.read_html(io.StringIO(response.text))
     except Exception as e:
-        raise ValueError(f"Could not parse HTML tables from the BoM response: {e}")
+        raise ValueError(f"Could not parse HTML tables. (If running locally, ensure 'lxml' is installed). Error: {e}")
         
-    # Search through the extracted tables to find the one containing the IFD data
     ifd_df = None
     for df in tables:
-        # Check if the table headers contain expected IFD keywords
         cols_str = str(df.columns.values)
         if "Duration" in cols_str or "1EY" in cols_str or "1%" in cols_str:
             ifd_df = df
             break
             
     if ifd_df is None:
-        raise ValueError("Could not find the IFD data table inside the BoM webpage.")
+        raise ValueError("Could not find the IFD data table inside the BoM webpage. BoM may have blocked the request.")
         
-    # BoM IFD HTML tables use a double-header (MultiIndex) for "Annual Exceedance Probability".
-    # We drop the top level to give us a clean, single-row header (Duration, 1EY, 50%, etc.)
     if isinstance(ifd_df.columns, pd.MultiIndex):
         ifd_df.columns = ifd_df.columns.droplevel(0)
         
-    # Clean up any empty columns or rows
     ifd_df = ifd_df.dropna(how='all').dropna(axis=1, how='all')
-    
-    # Re-create a clean CSV string from the extracted DataFrame for the download button
     clean_csv_text = ifd_df.to_csv(index=False)
     
     return ifd_df, clean_csv_text
