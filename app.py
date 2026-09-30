@@ -772,8 +772,20 @@ elif "IFD" in app_mode:
         ifd_lat = col1.number_input("Latitude (e.g., -33.8688)", value=-33.8688, format="%.5f")
         ifd_lon = col2.number_input("Longitude (e.g., 151.2093)", value=151.2093, format="%.5f")
     else:
-        st.info("Upload a spatial file or enter a Geofabric ID to automatically extract the centroid coordinates.")
-        ifd_uploaded_file = st.file_uploader("Upload Geometry", type=['geojson', 'zip'], key="ifd_upload")
+        st.info("Extract the centroid coordinates automatically from a BoM Geofabric ID or uploaded shapefile.")
+        ifd_gis_method = st.radio("GIS Input Source:", 
+            ["Sub-Catchment ID", "Drainage Basin ID", "Upload File"], 
+            horizontal=True, key="ifd_gis_radio")
+        
+        ifd_catchment_id = None
+        ifd_uploaded_file = None
+        
+        if "Sub-Catchment" in ifd_gis_method:
+            ifd_catchment_id = st.text_input("Enter Sub-Catchment ID:", key="ifd_sub_id")
+        elif "Drainage Basin" in ifd_gis_method:
+            ifd_catchment_id = st.text_input("Enter Drainage Basin HydroID:", key="ifd_basin_id")
+        else:
+            ifd_uploaded_file = st.file_uploader("Upload Geometry", type=['geojson', 'zip'], key="ifd_upload")
         
     st.markdown("### 2. Fetch IFD Data")
     if st.button("Download IFD Data from BoM", type="primary"):
@@ -784,10 +796,16 @@ elif "IFD" in app_mode:
                     target_lat = ifd_lat
                     target_lon = ifd_lon
                 else:
-                    if not ifd_uploaded_file:
-                        raise ValueError("Please upload a spatial file to extract the centroid.")
-                    # Load the uploaded file using our existing robust function
-                    catchment_gdf = load_custom_catchment(ifd_uploaded_file)
+                    if "Sub-Catchment" in ifd_gis_method:
+                        if not ifd_catchment_id: raise ValueError("Please enter a Catchment ID.")
+                        catchment_gdf = fetch_catchment_from_geofabric(ifd_catchment_id, "AHGFCatchment")
+                    elif "Drainage Basin" in ifd_gis_method:
+                        if not ifd_catchment_id: raise ValueError("Please enter a Basin ID.")
+                        catchment_gdf = fetch_catchment_from_geofabric(ifd_catchment_id, "NCBLevel2DrainageBasinGroup")
+                    else:
+                        if not ifd_uploaded_file: raise ValueError("Please upload a spatial file to extract the centroid.")
+                        catchment_gdf = load_custom_catchment(ifd_uploaded_file)
+                        
                     # Convert to WGS84 (Lat/Lon) to ensure correct API coordinates
                     catchment_wgs84 = catchment_gdf.to_crs(epsg=4326)
                     centroid = catchment_wgs84.geometry.iloc[0].centroid
