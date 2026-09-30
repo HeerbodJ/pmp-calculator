@@ -865,7 +865,8 @@ elif "IFD" in app_mode:
         )
         
         # Prepare data for plotting
-        plot_df = res['df'].copy()
+        clean_df = res['df'].dropna(subset=[res['df'].columns[1]]).copy()
+        plot_df = clean_df.copy()
         
         # Convert BoM text durations ("5 min", "1 hour", "3 day") into uniform numeric hours
         def duration_to_hours(d):
@@ -880,10 +881,14 @@ elif "IFD" in app_mode:
         # Identify all AEP columns to plot (everything except the duration columns)
         aep_cols = [c for c in plot_df.columns if c not in ['Duration', 'Duration (hrs)']]
         
+        # FIX: Force all AEP columns to numeric to prevent Plotly mixed-type errors
+        for col in aep_cols:
+            plot_df[col] = pd.to_numeric(plot_df[col], errors='coerce')
+        
         col_table, col_chart = st.columns([1, 2])
         with col_table:
             # Display the clean table
-            st.dataframe(res['df'], use_container_width=True, hide_index=True)
+            st.dataframe(clean_df, use_container_width=True, hide_index=True)
             
         with col_chart:
             # Default to True for IFD since it spans from minutes to days
@@ -901,5 +906,7 @@ elif "IFD" in app_mode:
             
             if log_toggle_ifd:
                 fig.update_layout(xaxis_type='log')
+                
+            st.plotly_chart(fig, use_container_width=True)
                 
             st.plotly_chart(fig, use_container_width=True)
