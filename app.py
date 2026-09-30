@@ -290,34 +290,43 @@ def create_swmm_timeseries(cid, tool, pmp_dict):
     return "\n".join(lines).encode('utf-8')
 
 def fetch_bom_ifd(lat, lon):
-    # Enforce HTTPS to prevent BoM redirecting to an HTML warning page
-    url = f"https://www.bom.gov.au/water/designRainfalls/revised-ifd/?year=2016&coordinate_type=dd&latitude={lat}&longitude={lon}&sdmin=true&sdhr=true&sdday=true&csv=true"
+    # Enforce HTTPS and remove the csv=true parameter since BoM is returning a webpage
+    url = f"https://www.bom.gov.au/water/designRainfalls/revised-ifd/?year=2016&coordinate_type=dd&latitude={lat}&longitude={lon}&sdmin=true&sdhr=true&sdday=true"
     headers = {'User-Agent': 'Mozilla/5.0'}
     
     response = requests.get(url, headers=headers, timeout=15)
     response.raise_for_status()
     
-    # Use 'in' rather than 'startswith' to account for double quotes in the CSV (e.g., '"Duration"')
-    lines = response.text.split('\n')
-    start_idx = 0
-    for i, line in enumerate(lines):
-        if "Duration" in line and "EY" in line:
-            start_idx = i
+    # Use pandas to automatically parse all HTML tables found on the BoM webpage
+    try:
+        tables = pd.read_html(io.StringIO(response.text))
+    except Exception as e:
+        raise ValueError(f"Could not parse HTML tables from the BoM response: {e}")
+        
+    # Search through the extracted tables to find the one containing the IFD data
+    ifd_df = None
+    for df in tables:
+        # Check if the table headers contain expected IFD keywords
+        cols_str = str(df.columns.values)
+        if "Duration" in cols_str or "1EY" in cols_str or "1%" in cols_str:
+            ifd_df = df
             break
             
-    if start_idx == 0:
-        # Fallback to show the raw response if BoM completely changes their format
-        st.error(f"BoM API Diagnostic Snippet: {response.text[:500]}")
-        raise ValueError("Could not find valid rainfall data in the BoM response.")
+    if ifd_df is None:
+        raise ValueError("Could not find the IFD data table inside the BoM webpage.")
         
-    # Read the cleaned data into a Pandas DataFrame
-    csv_data = "\n".join(lines[start_idx:])
-    df = pd.read_csv(io.StringIO(csv_data))
+    # BoM IFD HTML tables use a double-header (MultiIndex) for "Annual Exceedance Probability".
+    # We drop the top level to give us a clean, single-row header (Duration, 1EY, 50%, etc.)
+    if isinstance(ifd_df.columns, pd.MultiIndex):
+        ifd_df.columns = ifd_df.columns.droplevel(0)
+        
+    # Clean up any empty columns or rows
+    ifd_df = ifd_df.dropna(how='all').dropna(axis=1, how='all')
     
-    # Drop any empty trailing rows or columns BoM might include
-    df = df.dropna(how='all').dropna(axis=1, how='all')
+    # Re-create a clean CSV string from the extracted DataFrame for the download button
+    clean_csv_text = ifd_df.to_csv(index=False)
     
-    return df, response.text
+    return ifd_df, clean_csv_text
 
 def create_interactive_map(catchment_geo):
     # Reproject to WGS84 for web mapping
