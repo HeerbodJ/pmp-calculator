@@ -364,9 +364,6 @@ def calculate_automated_pmp(catchment, progress_bar=None, status_text=None, cust
 
     update_status(50, f"Zone identified as {full_zone_name}. Extracting Moisture Adjustment Factor (MAF)...")
     with rasterio.open(maf_grid_path) as src:
-
-    update_status(50, f"Zone identified as {full_zone_name}. Extracting Moisture Adjustment Factor (MAF)...")
-    with rasterio.open(maf_grid_path) as src:
         raster_crs = src.crs if src.crs else "EPSG:4283"
         geom = catchment.to_crs(raster_crs).geometry.iloc[0].__geo_interface__
     maf_value = get_catchment_average(maf_grid_path, geom) / standard_epw
