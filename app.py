@@ -364,7 +364,6 @@ def calculate_automated_pmp(catchment, progress_bar=None, status_text=None, cust
 
     update_status(50, f"Zone identified as {full_zone_name}. Extracting Moisture Adjustment Factor (MAF)...")
     with rasterio.open(maf_grid_path) as src:
-# ... (The rest of the function remains exactly the same)
 
     update_status(50, f"Zone identified as {full_zone_name}. Extracting Moisture Adjustment Factor (MAF)...")
     with rasterio.open(maf_grid_path) as src:
