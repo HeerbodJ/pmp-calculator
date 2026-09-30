@@ -764,13 +764,28 @@ elif "IFD" in app_mode:
     
     st.markdown("### 1. Define Location")
     ifd_input_method = st.radio("Select location method:", 
-        ["Manual Coordinate Entry (Lat/Lon)", "Use Catchment Centroid from GIS"], 
+        ["Manual Coordinate Entry", "Select from Interactive Map", "Use Catchment Centroid from GIS"], 
         horizontal=True, key="ifd_radio")
         
     if "Manual" in ifd_input_method:
         col1, col2 = st.columns(2)
         ifd_lat = col1.number_input("Latitude (e.g., -33.8688)", value=-33.8688, format="%.5f")
         ifd_lon = col2.number_input("Longitude (e.g., 151.2093)", value=151.2093, format="%.5f")
+        
+    elif "Map" in ifd_input_method:
+        st.info("Click anywhere on the map to lock in your coordinates.")
+        # Generate an interactive map centered on Australia
+        m_ifd = folium.Map(location=[-25.2744, 133.7751], zoom_start=4)
+        m_ifd.add_child(folium.LatLngPopup())
+        map_data = st_folium(m_ifd, height=400, width=720, key="ifd_map_select")
+        
+        if map_data and map_data.get("last_clicked"):
+            ifd_lat = round(map_data["last_clicked"]["lat"], 5)
+            ifd_lon = round(map_data["last_clicked"]["lng"], 5)
+            st.success(f"📍 Selected Coordinates: {ifd_lat}, {ifd_lon}")
+        else:
+            ifd_lat, ifd_lon = None, None
+            
     else:
         st.info("Extract the centroid coordinates automatically from a BoM Geofabric ID or uploaded shapefile.")
         ifd_gis_method = st.radio("GIS Input Source:", 
@@ -795,6 +810,11 @@ elif "IFD" in app_mode:
             try:
                 # 1. Determine Coordinates
                 if "Manual" in ifd_input_method:
+                    target_lat = ifd_lat
+                    target_lon = ifd_lon
+                elif "Map" in ifd_input_method:
+                    if ifd_lat is None or ifd_lon is None:
+                        raise ValueError("Please click a location on the map first.")
                     target_lat = ifd_lat
                     target_lon = ifd_lon
                 else:
