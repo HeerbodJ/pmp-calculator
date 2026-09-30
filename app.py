@@ -11,6 +11,7 @@ import gdown
 import zipfile
 import os
 import tempfile
+import io
 from fpdf import FPDF
 import plotly.express as px
 import folium
@@ -287,6 +288,35 @@ def create_swmm_timeseries(cid, tool, pmp_dict):
         lines.append(f"{dur_val}\t{depth}")
         
     return "\n".join(lines).encode('utf-8')
+
+def fetch_bom_ifd(lat, lon):
+    # Construct the hidden API URL used by the BoM IFD portal
+    url = f"http://www.bom.gov.au/water/designRainfalls/revised-ifd/?year=2016&coordinate_type=dd&latitude={lat}&longitude={lon}&sdmin=true&sdhr=true&sdday=true&csv=true"
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    
+    response = requests.get(url, headers=headers, timeout=15)
+    response.raise_for_status()
+    
+    # The BoM CSV contains several rows of metadata at the top. 
+    # We must scan down to find the row that starts with "Duration" to isolate the actual data table.
+    lines = response.text.split('\n')
+    start_idx = 0
+    for i, line in enumerate(lines):
+        if line.startswith("Duration"):
+            start_idx = i
+            break
+            
+    if start_idx == 0:
+        raise ValueError("Could not find valid rainfall data in the BoM response.")
+        
+    # Read the cleaned data into a Pandas DataFrame
+    csv_data = "\n".join(lines[start_idx:])
+    df = pd.read_csv(io.StringIO(csv_data))
+    
+    # Drop any empty trailing rows or columns BoM might include
+    df = df.dropna(how='all').dropna(axis=1, how='all')
+    
+    return df, response.text
 
 def create_interactive_map(catchment_geo):
     # Reproject to WGS84 for web mapping
@@ -731,4 +761,53 @@ elif "IFD" in app_mode:
         
     st.markdown("### 2. Fetch IFD Data")
     if st.button("Download IFD Data from BoM", type="primary"):
-        st.warning("Data fetching logic will be added in Step 2!")
+        with st.spinner("Fetching data from the Bureau of Meteorology..."):
+            try:
+                # 1. Determine Coordinates
+                if "Manual" in ifd_input_method:
+                    target_lat = ifd_lat
+                    target_lon = ifd_lon
+                else:
+                    if not ifd_uploaded_file:
+                        raise ValueError("Please upload a spatial file to extract the centroid.")
+                    # Load the uploaded file using our existing robust function
+                    catchment_gdf = load_custom_catchment(ifd_uploaded_file)
+                    # Convert to WGS84 (Lat/Lon) to ensure correct API coordinates
+                    catchment_wgs84 = catchment_gdf.to_crs(epsg=4326)
+                    centroid = catchment_wgs84.geometry.iloc[0].centroid
+                    target_lat = round(centroid.y, 5)
+                    target_lon = round(centroid.x, 5)
+                    st.info(f"📍 Extracted Centroid: Latitude {target_lat}, Longitude {target_lon}")
+
+                # 2. Fetch the Data
+                ifd_df, raw_csv_text = fetch_bom_ifd(target_lat, target_lon)
+                
+                # Save to session state so it persists on the screen
+                st.session_state.ifd_results = {
+                    "df": ifd_df, 
+                    "raw_csv": raw_csv_text, 
+                    "lat": target_lat, 
+                    "lon": target_lon
+                }
+                
+            except Exception as e:
+                st.error(f"Error fetching IFD data: {e}")
+                st.session_state.ifd_results = None
+
+    # 3. Display the Results
+    if getattr(st.session_state, 'ifd_results', None) is not None:
+        res = st.session_state.ifd_results
+        
+        st.success("IFD Data successfully retrieved!")
+        st.write(f"**Coordinates:** {res['lat']}, {res['lon']}")
+        
+        # Display the raw dataframe
+        st.dataframe(res['df'], use_container_width=True)
+        
+        # Add a quick download button for the original BoM CSV
+        st.download_button(
+            label="Download Original BoM CSV", 
+            data=res['raw_csv'].encode('utf-8'), 
+            file_name=f"IFD_{res['lat']}_{res['lon']}.csv", 
+            mime="text/csv"
+        )
