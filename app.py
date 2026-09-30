@@ -12,6 +12,7 @@ import zipfile
 import os
 import tempfile
 import io
+import re
 from fpdf import FPDF
 import plotly.express as px
 import folium
@@ -291,25 +292,27 @@ def create_swmm_timeseries(cid, tool, pmp_dict):
 
 def fetch_bom_ifd(lat, lon):
     url = f"https://www.bom.gov.au/water/designRainfalls/revised-ifd/?year=2016&coordinate_type=dd&latitude={lat}&longitude={lon}&sdmin=true&sdhr=true&sdday=true"
-    # Upgrade the headers to look exactly like a modern Windows Chrome browser
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
     }
     
     try:
-        # Doubled the timeout to 30 seconds to accommodate BoM server lag
         response = requests.get(url, headers=headers, timeout=30)
         response.raise_for_status()
     except requests.exceptions.Timeout:
-        raise ValueError("The Bureau of Meteorology server timed out. This often happens if the BoM server is under heavy load, or if Streamlit's overseas servers are being delayed by BoM's geofencing. Please click download again.")
+        raise ValueError("The Bureau of Meteorology server timed out. Please click download again.")
     except Exception as e:
         raise ValueError(f"Connection failed: {e}")
     
+    # FIX: Sanitize the BoM HTML to remove percentage signs in colspans/rowspans
+    # This prevents the Pandas "invalid literal for int() with base 10: '100%'" crash
+    safe_html = re.sub(r'(colspan|rowspan)\s*=\s*["\']?[0-9]+%["\']?', r'\1="1"', response.text, flags=re.IGNORECASE)
+    
     try:
-        tables = pd.read_html(io.StringIO(response.text))
+        tables = pd.read_html(io.StringIO(safe_html))
     except Exception as e:
-        raise ValueError(f"Could not parse HTML tables. (If running locally, ensure 'lxml' is installed). Error: {e}")
+        raise ValueError(f"Could not parse HTML tables. Error: {e}")
         
     ifd_df = None
     for df in tables:
@@ -319,11 +322,13 @@ def fetch_bom_ifd(lat, lon):
             break
             
     if ifd_df is None:
-        raise ValueError("Could not find the IFD data table inside the BoM webpage. BoM may have blocked the request.")
+        raise ValueError("Could not find the IFD data table inside the BoM webpage.")
         
+    # Flatten the multi-level header BoM uses
     if isinstance(ifd_df.columns, pd.MultiIndex):
         ifd_df.columns = ifd_df.columns.droplevel(0)
         
+    # Clean up any empty columns or rows
     ifd_df = ifd_df.dropna(how='all').dropna(axis=1, how='all')
     clean_csv_text = ifd_df.to_csv(index=False)
     
