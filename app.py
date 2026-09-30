@@ -323,7 +323,7 @@ def create_interactive_map(catchment_geo):
     return m
 
 # --- 4. CALCULATION FUNCTIONS ---
-def calculate_automated_pmp(catchment, progress_bar=None, status_text=None):
+def calculate_automated_pmp(catchment, progress_bar=None, status_text=None, custom_gsam_epw=56.7, custom_gtsmr_epw=73.0):
     def update_status(val, text):
         if progress_bar is not None and status_text is not None:
             progress_bar.progress(val)
@@ -353,14 +353,18 @@ def calculate_automated_pmp(catchment, progress_bar=None, status_text=None):
         if not GSAM_CD_ROOT or not GSAM_MAF_GRID:
             raise FileNotFoundError("GSAM data files are missing. Check System Diagnostics.")
         method, cd_root = "GSAM", GSAM_CD_ROOT
-        maf_grid_path, topo_grid_path, standard_epw = GSAM_MAF_GRID, GSAM_TOPO_GRID, GSAM_STANDARD_EPW
+        maf_grid_path, topo_grid_path, standard_epw = GSAM_MAF_GRID, GSAM_TOPO_GRID, custom_gsam_epw
     elif "GTSMR" in full_zone_name and "Transition" not in full_zone_name:
         if not GTSMR_CD_ROOT or not GTSMR_MAF_GRID:
             raise FileNotFoundError("GTSMR data files are missing. Check System Diagnostics.")
         method, cd_root = "GTSMR", GTSMR_CD_ROOT
-        maf_grid_path, topo_grid_path, standard_epw = GTSMR_MAF_GRID, GTSMR_TOPO_GRID, GTSMR_STANDARD_EPW
+        maf_grid_path, topo_grid_path, standard_epw = GTSMR_MAF_GRID, GTSMR_TOPO_GRID, custom_gtsmr_epw
     else:
         raise NotImplementedError("Transition zones require manual dual-method weighting.")
+
+    update_status(50, f"Zone identified as {full_zone_name}. Extracting Moisture Adjustment Factor (MAF)...")
+    with rasterio.open(maf_grid_path) as src:
+# ... (The rest of the function remains exactly the same)
 
     update_status(50, f"Zone identified as {full_zone_name}. Extracting Moisture Adjustment Factor (MAF)...")
     with rasterio.open(maf_grid_path) as src:
@@ -408,6 +412,7 @@ def calculate_automated_pmp(catchment, progress_bar=None, status_text=None):
         "PMP (mm)": final_pmp,
         "Catchment_Geo": catchment
     }
+
 # --- 5. STREAMLIT WEB INTERFACE ---
 st.set_page_config(page_title="PMP Calculator", layout="wide")
 
@@ -428,6 +433,12 @@ if "gsdm_results" not in st.session_state:
     st.session_state.gsdm_results = None
 
 with st.sidebar:
+    st.markdown("### ⚙️ Engineering Parameters")
+    st.write("Adjust standard EPW values for sensitivity testing:")
+    gsam_epw_input = st.number_input("GSAM Standard EPW", value=56.7, step=0.1)
+    gtsmr_epw_input = st.number_input("GTSMR Standard EPW", value=73.0, step=0.1)
+    
+    st.markdown("---")
     st.markdown("### 📊 System Diagnostics")
     st.write("Streamlit servers are hosted outside Australia, so the BoM API is geofenced. The app will rely exclusively on these offline files:")
     st.write("✅ Database Found" if LOCAL_GEOFABRIC_DB else "❌ Database Missing")
@@ -440,7 +451,6 @@ with st.sidebar:
         st.session_state.long_pmp_results = None
         st.session_state.gsdm_results = None
         st.rerun()
-
 st.title("PMP Calculator")
 st.markdown("Calculate GSAM, GTSMR, and GSDM instantly.")
 
@@ -489,7 +499,7 @@ with tab_long:
                 if not uploaded_file: raise ValueError("Please upload a file.")
                 catchment_gdf = load_custom_catchment(uploaded_file)
 
-            res = calculate_automated_pmp(catchment_gdf, progress_bar, status_text)
+            res = calculate_automated_pmp(catchment_gdf, progress_bar, status_text, gsam_epw_input, gtsmr_epw_input)
             st.session_state.long_pmp_results = {"results": res, "catchment_id": cid_display}
             
             # Hide the progress bar once complete
