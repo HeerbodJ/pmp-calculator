@@ -440,7 +440,11 @@ def reset_epw_defaults():
     st.session_state.gtsmr_epw = 73.0
 
 with st.sidebar:
-    st.markdown("### ⚙️ Engineering Parameters")
+    st.markdown("### 🧭 Navigation")
+    app_mode = st.radio("Select Module:", ["Probable Maximum Precipitation (PMP)", "Intensity-Frequency-Duration (IFD)"])
+    
+    st.markdown("---")
+    st.markdown("### ⚙️ Engineering Parameters (PMP)")
     st.write("Adjust standard EPW values for sensitivity testing:")
     
     # Tie the inputs directly to the session state keys
@@ -464,259 +468,267 @@ with st.sidebar:
         reset_epw_defaults()
         st.rerun()
 
-st.title("PMP Calculator")
-st.markdown("Calculate GSAM, GTSMR, and GSDM instantly.")
+st.title("Design Rainfall & PMP Dashboard")
 
-# --- INPUT METHOD UI ---
-st.markdown("### 1. Define Catchment Boundary")
-input_method = st.radio("Select input method:", 
-    ["Sub-Catchment (Geofabric SH_Network)", 
-     "Drainage Basin (Geofabric NCBLevel2)", 
-     "Upload Custom GIS File (.geojson or .zip)"],
-    horizontal=True, label_visibility="collapsed")
+# ==========================================
+# MODULE 1: PROBABLE MAXIMUM PRECIPITATION
+# ==========================================
+if "PMP" in app_mode:
+    st.markdown("Calculate GSAM, GTSMR, and GSDM instantly.")
 
-catchment_id_input = None
-uploaded_file = None
-cid_display = "Custom_Boundary"
+    # --- INPUT METHOD UI ---
+    st.markdown("### 1. Define Catchment Boundary")
+    input_method = st.radio("Select input method:", 
+        ["Sub-Catchment (Geofabric SH_Network)", 
+         "Drainage Basin (Geofabric NCBLevel2)", 
+         "Upload Custom GIS File (.geojson or .zip)"],
+        horizontal=True, label_visibility="collapsed")
 
-if "Sub-Catchment" in input_method:
-    st.info("🔍 Find your target HydroID or SegmentNo using the [BoM Geofabric Portal (Layer 7)](https://portal.wsapi.cloud.bom.gov.au/arcgis/apps/sites/#/australian-water-data-service/datasets/35719064c4ea4ad79faa82f5c9c22068/explore?layer=7).")
-    catchment_id_input = st.text_input("Enter Sub-Catchment ID:")
-    if catchment_id_input: cid_display = str(catchment_id_input)
-elif "Drainage Basin" in input_method:
-    st.info("🔍 Find your target HydroID using the [BoM Geofabric Portal (Layer 34)](https://portal.wsapi.cloud.bom.gov.au/arcgis/apps/sites/#/australian-water-data-service/datasets/35719064c4ea4ad79faa82f5c9c22068/explore?layer=34).")
-    catchment_id_input = st.text_input("Enter Drainage Basin HydroID:")
-    if catchment_id_input: cid_display = str(catchment_id_input)
-else:
-    st.info("Upload your own catchment boundary. If your file contains multiple polygons, they will be dissolved into a single unified area.")
-    uploaded_file = st.file_uploader("Upload Geometry", type=['geojson', 'zip'])
-    if uploaded_file: cid_display = uploaded_file.name.split('.')[0]
+    catchment_id_input = None
+    uploaded_file = None
+    cid_display = "Custom_Boundary"
 
-st.markdown("### 2. Run Calculation")
-tab_long, tab_short = st.tabs(["Long-Duration PMP (GSAM / GTSMR)", "Short-Duration PMP (GSDM)"])
+    if "Sub-Catchment" in input_method:
+        st.info("🔍 Find your target HydroID or SegmentNo using the [BoM Geofabric Portal (Layer 7)](https://portal.wsapi.cloud.bom.gov.au/arcgis/apps/sites/#/australian-water-data-service/datasets/35719064c4ea4ad79faa82f5c9c22068/explore?layer=7).")
+        catchment_id_input = st.text_input("Enter Sub-Catchment ID:")
+        if catchment_id_input: cid_display = str(catchment_id_input)
+    elif "Drainage Basin" in input_method:
+        st.info("🔍 Find your target HydroID using the [BoM Geofabric Portal (Layer 34)](https://portal.wsapi.cloud.bom.gov.au/arcgis/apps/sites/#/australian-water-data-service/datasets/35719064c4ea4ad79faa82f5c9c22068/explore?layer=34).")
+        catchment_id_input = st.text_input("Enter Drainage Basin HydroID:")
+        if catchment_id_input: cid_display = str(catchment_id_input)
+    else:
+        st.info("Upload your own catchment boundary. If your file contains multiple polygons, they will be dissolved into a single unified area.")
+        uploaded_file = st.file_uploader("Upload Geometry", type=['geojson', 'zip'])
+        if uploaded_file: cid_display = uploaded_file.name.split('.')[0]
 
-with tab_long:
-    if st.button("Calculate Long-Duration PMP", type="primary"):
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        status_text.write("⏳ Initializing spatial engine...")
-        
-        try:
-            if "Sub-Catchment" in input_method:
-                if not catchment_id_input: raise ValueError("Please enter a Catchment ID.")
-                catchment_gdf = fetch_catchment_from_geofabric(catchment_id_input, "AHGFCatchment")
-            elif "Drainage Basin" in input_method:
-                if not catchment_id_input: raise ValueError("Please enter a Basin ID.")
-                catchment_gdf = fetch_catchment_from_geofabric(catchment_id_input, "NCBLevel2DrainageBasinGroup")
-            else:
-                if not uploaded_file: raise ValueError("Please upload a file.")
-                catchment_gdf = load_custom_catchment(uploaded_file)
+    st.markdown("### 2. Run Calculation")
+    tab_long, tab_short = st.tabs(["Long-Duration PMP (GSAM / GTSMR)", "Short-Duration PMP (GSDM)"])
 
-            res = calculate_automated_pmp(catchment_gdf, progress_bar, status_text, gsam_epw_input, gtsmr_epw_input)
-            st.session_state.long_pmp_results = {"results": res, "catchment_id": cid_display}
+    with tab_long:
+        if st.button("Calculate Long-Duration PMP", type="primary"):
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            status_text.write("⏳ Initializing spatial engine...")
             
-            # Hide the progress bar once complete
-            progress_bar.empty()
-            status_text.empty()
-        except Exception as e:
-            st.error(f"Error: {e}")
-            st.session_state.long_pmp_results = None
+            try:
+                if "Sub-Catchment" in input_method:
+                    if not catchment_id_input: raise ValueError("Please enter a Catchment ID.")
+                    catchment_gdf = fetch_catchment_from_geofabric(catchment_id_input, "AHGFCatchment")
+                elif "Drainage Basin" in input_method:
+                    if not catchment_id_input: raise ValueError("Please enter a Basin ID.")
+                    catchment_gdf = fetch_catchment_from_geofabric(catchment_id_input, "NCBLevel2DrainageBasinGroup")
+                else:
+                    if not uploaded_file: raise ValueError("Please upload a file.")
+                    catchment_gdf = load_custom_catchment(uploaded_file)
 
-    if st.session_state.long_pmp_results is not None:
-        results = st.session_state.long_pmp_results["results"]
-        cid = st.session_state.long_pmp_results["catchment_id"]
-        
-        st.success("Calculation Complete!")
+                res = calculate_automated_pmp(catchment_gdf, progress_bar, status_text, gsam_epw_input, gtsmr_epw_input)
+                st.session_state.long_pmp_results = {"results": res, "catchment_id": cid_display}
+                
+                progress_bar.empty()
+                status_text.empty()
+            except Exception as e:
+                st.error(f"Error: {e}")
+                st.session_state.long_pmp_results = None
+
+        if st.session_state.long_pmp_results is not None:
+            results = st.session_state.long_pmp_results["results"]
+            cid = st.session_state.long_pmp_results["catchment_id"]
+            
+            st.success("Calculation Complete!")
+            
+            col1, col2 = st.columns(2)
+            col1.metric("Catchment Area", f"{results['Area (km2)']} km²")
+            col1.metric("PMP Zone", results['Zone'])
+            col2.metric("MAF", results['MAF'])
+            col2.metric("TAF", results['TAF'])
+            
+            st.subheader("Final PMP Depths")
+            df_pmp = pd.DataFrame(list(results['PMP (mm)'].items()), columns=['Duration', 'Depth (mm)'])
+            
+            col_table, col_chart = st.columns([1, 2])
+            with col_table:
+                st.table(df_pmp)
+                
+            with col_chart:
+                df_pmp['Duration (hrs)'] = df_pmp['Duration'].str.replace(' Hours', '').astype(float)
+                df_pmp['MAF Applied'] = results['MAF']
+                df_pmp['TAF Applied'] = results['TAF']
+                
+                log_toggle_long = st.checkbox("Logarithmic X-Axis (Duration)", value=False, key="log_long")
+                
+                fig = px.line(
+                    df_pmp, 
+                    x='Duration (hrs)', 
+                    y='Depth (mm)', 
+                    markers=True, 
+                    title="Long-Duration PMP Curve",
+                    hover_data={'Duration (hrs)': True, 'Depth (mm)': True, 'Duration': False, 'MAF Applied': True, 'TAF Applied': True}
+                )
+                fig.update_traces(line_color='#ef4444', marker=dict(size=8))
+                
+                if log_toggle_long:
+                    fig.update_layout(xaxis_type='log')
+                    
+                st.plotly_chart(fig, use_container_width=True)
+            
+            st.markdown("### Catchment Location")
+            catchment_geo = results['Catchment_Geo']
+            m = create_interactive_map(catchment_geo)
+            st_folium(m, width=720, height=400, returned_objects=[], key="map_long")
+                    
+            st.markdown("### 📥 Export Results")
+            col_csv, col_gis, col_pdf, col_swmm = st.columns(4)
+            
+            csv_data = create_csv(results['PMP (mm)'])
+            col_csv.download_button("Download CSV", data=csv_data, file_name=f"PMP_{cid}.csv", mime="text/csv", key="long_csv")
+            
+            meta_dict = {"Area_km2": results["Area (km2)"], "Zone": results["Zone"], "Method": results["Method"], "MAF": results["MAF"], "TAF": results["TAF"]}
+            geojson_data = create_geojson(results['Catchment_Geo'], meta_dict, results['PMP (mm)'])
+            col_gis.download_button("Download GIS", data=geojson_data, file_name=f"Catchment_{cid}.geojson", mime="application/geo+json", key="long_gis")
+            
+            pdf_data = create_pdf(cid, "Long-Duration PMP (GSAM / GTSMR)", meta_dict, results['PMP (mm)'])
+            col_pdf.download_button("Download PDF", data=pdf_data, file_name=f"PMP_Report_{cid}.pdf", mime="application/pdf", key="long_pdf")
+            
+            swmm_data = create_swmm_timeseries(cid, "Long-Duration PMP (GSAM / GTSMR)", results['PMP (mm)'])
+            col_swmm.download_button("Download SWMM/12d", data=swmm_data, file_name=f"PMP_Curve_{cid}.dat", mime="text/plain", key="long_swmm")
+
+    with tab_short:
+        with st.expander("📖 View GSDM Terrain & Moisture Rules"):
+            st.markdown("Reference the official [BoM GSDM Guidebook (PDF)](http://www.bom.gov.au/water/designRainfalls/document/GSDM.pdf) for the required inputs. See Section 3 for terrain classification rules.")
         
         col1, col2 = st.columns(2)
-        col1.metric("Catchment Area", f"{results['Area (km2)']} km²")
-        col1.metric("PMP Zone", results['Zone'])
-        col2.metric("MAF", results['MAF'])
-        col2.metric("TAF", results['TAF'])
-        
-        st.subheader("Final PMP Depths")
-        df_pmp = pd.DataFrame(list(results['PMP (mm)'].items()), columns=['Duration', 'Depth (mm)'])
-        
-        # Display static table alongside the interactive chart
-        col_table, col_chart = st.columns([1, 2])
-        with col_table:
-            st.table(df_pmp)
+        with col1:
+            maf_input = st.number_input("Moisture Adjustment Factor (MAF) from BoM Figure 3:", min_value=0.0, max_value=2.0, value=1.0)
+            elev_input = st.number_input("Mean Elevation (m)", min_value=0, value=500)
+        with col2:
+            r_percent = st.slider("Percentage of ROUGH terrain (%)", 0, 100, 0) / 100
             
-        with col_chart:
-            # Prepare numeric data and hover metadata for Plotly
-            df_pmp['Duration (hrs)'] = df_pmp['Duration'].str.replace(' Hours', '').astype(float)
-            df_pmp['MAF Applied'] = results['MAF']
-            df_pmp['TAF Applied'] = results['TAF']
+        if st.button("Calculate Short-Duration PMP", type="primary"):
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            status_text.write("⏳ Fetching catchment geometry...")
             
-            log_toggle_long = st.checkbox("Logarithmic X-Axis (Duration)", value=False, key="log_long")
-            
-            fig = px.line(
-                df_pmp, 
-                x='Duration (hrs)', 
-                y='Depth (mm)', 
-                markers=True, 
-                title="Long-Duration PMP Curve",
-                hover_data={
-                    'Duration (hrs)': True, 
-                    'Depth (mm)': True, 
-                    'Duration': False, 
-                    'MAF Applied': True, 
-                    'TAF Applied': True
-                }
-            )
-            fig.update_traces(line_color='#ef4444', marker=dict(size=8))
-            
-            if log_toggle_long:
-                fig.update_layout(xaxis_type='log')
-                
-            st.plotly_chart(fig, use_container_width=True)
-        
-        st.markdown("### Catchment Location")
-        catchment_geo = results['Catchment_Geo']
-        m = create_interactive_map(catchment_geo)
-        st_folium(m, width=720, height=400, returned_objects=[], key="map_long")
-                
-        st.markdown("### 📥 Export Results")
-        col_csv, col_gis, col_pdf, col_swmm = st.columns(4)
-        
-        csv_data = create_csv(results['PMP (mm)'])
-        col_csv.download_button("Download CSV", data=csv_data, file_name=f"PMP_{cid}.csv", mime="text/csv", key="long_csv")
-        
-        meta_dict = {"Area_km2": results["Area (km2)"], "Zone": results["Zone"], "Method": results["Method"], "MAF": results["MAF"], "TAF": results["TAF"]}
-        geojson_data = create_geojson(results['Catchment_Geo'], meta_dict, results['PMP (mm)'])
-        col_gis.download_button("Download GIS", data=geojson_data, file_name=f"Catchment_{cid}.geojson", mime="application/geo+json", key="long_gis")
-        
-        pdf_data = create_pdf(cid, "Long-Duration PMP (GSAM / GTSMR)", meta_dict, results['PMP (mm)'])
-        col_pdf.download_button("Download PDF", data=pdf_data, file_name=f"PMP_Report_{cid}.pdf", mime="application/pdf", key="long_pdf")
-        
-        # New SWMM / 12d Export
-        swmm_data = create_swmm_timeseries(cid, "Long-Duration PMP (GSAM / GTSMR)", results['PMP (mm)'])
-        col_swmm.download_button("Download SWMM/12d", data=swmm_data, file_name=f"PMP_Curve_{cid}.dat", mime="text/plain", key="long_swmm")
+            try:
+                if "Sub-Catchment" in input_method:
+                    if not catchment_id_input: raise ValueError("Please enter a Catchment ID.")
+                    catchment_gdf = fetch_catchment_from_geofabric(catchment_id_input, "AHGFCatchment")
+                elif "Drainage Basin" in input_method:
+                    if not catchment_id_input: raise ValueError("Please enter a Basin ID.")
+                    catchment_gdf = fetch_catchment_from_geofabric(catchment_id_input, "NCBLevel2DrainageBasinGroup")
+                else:
+                    if not uploaded_file: raise ValueError("Please upload a file.")
+                    catchment_gdf = load_custom_catchment(uploaded_file)
 
-with tab_short:
-    with st.expander("📖 View GSDM Terrain & Moisture Rules"):
-        st.markdown("Reference the official [BoM GSDM Guidebook (PDF)](http://www.bom.gov.au/water/designRainfalls/document/GSDM.pdf) for the required inputs. See Section 3 for terrain classification rules.")
+                progress_bar.progress(30)
+                status_text.write("⏳ Calculating area and applying elevation factors...")
+                area_km2 = catchment_gdf.to_crs(epsg=3577).geometry.area.sum() / 1e6
+                eaf_value = 1.0 if elev_input <= 1500 else 1.0 - (((elev_input - 1500) / 300) * 0.05)
+                s_percent = 1.0 - r_percent
+                target_log_area = np.log10(max(1.0, min(area_km2, 1000.0)))
+                log_areas = np.log10(gsdm_smooth_df.index)
+                
+                progress_bar.progress(70)
+                status_text.write("⏳ Interpolating GSDM depth-duration curves...")
+                final_gsdm = {}
+                for dur in GSDM_DURATIONS:
+                    ds_val = float(interp1d(log_areas, gsdm_smooth_df[dur], kind='linear', fill_value='extrapolate')(target_log_area))
+                    dr_val = float(interp1d(log_areas, gsdm_rough_df[dur], kind='linear', fill_value='extrapolate')(target_log_area))
+                    final_gsdm[f"{dur} Hours"] = round((s_percent * ds_val + r_percent * dr_val) * maf_input * eaf_value, 1)
+                
+                progress_bar.progress(100)
+                status_text.write("⏳ Finalizing results...")
+                
+                st.session_state.gsdm_results = {
+                    "final_gsdm": final_gsdm, "catchment": catchment_gdf, "area_km2": area_km2, 
+                    "maf_input": maf_input, "eaf_value": eaf_value, "r_percent": r_percent, "catchment_id": cid_display
+                }
+                
+                progress_bar.empty()
+                status_text.empty()
+            except Exception as e:
+                st.error(f"Error: {e}")
+                st.session_state.gsdm_results = None
+
+        if st.session_state.gsdm_results is not None:
+            res = st.session_state.gsdm_results
+            cid = res["catchment_id"]
+            area_km2 = res["area_km2"]
+            final_gsdm = res["final_gsdm"]
+            
+            if area_km2 > 1000:
+                st.warning(f"Catchment area ({area_km2:.2f} km²) exceeds the 1,000 km² limit for GSDM. Results may not be valid.")
+                
+            st.success("Calculation Complete!")
+            st.metric("Catchment Area", f"{area_km2:.2f} km²")
+            df_gsdm = pd.DataFrame(list(final_gsdm.items()), columns=['Duration', 'Depth (mm)'])
+            
+            col_table, col_chart = st.columns([1, 2])
+            with col_table:
+                st.table(df_gsdm)
+                
+            with col_chart:
+                df_gsdm['Duration (hrs)'] = df_gsdm['Duration'].str.replace(' Hours', '').astype(float)
+                df_gsdm['MAF Applied'] = res['maf_input']
+                df_gsdm['EAF Applied'] = round(res['eaf_value'], 3)
+                df_gsdm['Rough Terrain (%)'] = res['r_percent'] * 100
+                
+                log_toggle_short = st.checkbox("Logarithmic X-Axis (Duration)", value=False, key="log_short")
+                
+                fig = px.line(
+                    df_gsdm, 
+                    x='Duration (hrs)', 
+                    y='Depth (mm)', 
+                    markers=True, 
+                    title="Short-Duration PMP Curve",
+                    hover_data={'Duration (hrs)': True, 'Depth (mm)': True, 'Duration': False, 'MAF Applied': True, 'EAF Applied': True, 'Rough Terrain (%)': True}
+                )
+                fig.update_traces(line_color='#ef4444', marker=dict(size=8))
+                
+                if log_toggle_short:
+                    fig.update_layout(xaxis_type='log')
+                    
+                st.plotly_chart(fig, use_container_width=True)
+            
+            st.markdown("### Catchment Location")
+            catchment_geo = res["catchment"]
+            m = create_interactive_map(catchment_geo)
+            st_folium(m, width=720, height=400, returned_objects=[], key="map_short")
+            
+            st.markdown("### 📥 Export Results")
+            col_csv, col_gis, col_pdf, col_swmm = st.columns(4)
+            
+            csv_data = create_csv(final_gsdm)
+            col_csv.download_button("Download CSV", data=csv_data, file_name=f"GSDM_{cid}.csv", mime="text/csv", key="gsdm_csv")
+            
+            meta_dict = {"Area_km2": round(area_km2, 2), "MAF_Input": res["maf_input"], "EAF": round(res["eaf_value"], 3), "Rough_Pct": res["r_percent"] * 100}
+            geojson_data = create_geojson(res["catchment"], meta_dict, final_gsdm)
+            col_gis.download_button("Download GIS", data=geojson_data, file_name=f"Catchment_{cid}.geojson", mime="application/geo+json", key="gsdm_gis")
+            
+            pdf_data = create_pdf(cid, "Short-Duration PMP (GSDM)", meta_dict, final_gsdm)
+            col_pdf.download_button("Download PDF", data=pdf_data, file_name=f"GSDM_Report_{cid}.pdf", mime="application/pdf", key="gsdm_pdf")
+            
+            swmm_data = create_swmm_timeseries(cid, "Short-Duration PMP (GSDM)", final_gsdm)
+            col_swmm.download_button("Download SWMM/12d", data=swmm_data, file_name=f"GSDM_Curve_{cid}.dat", mime="text/plain", key="gsdm_swmm")
+
+# ==========================================
+# MODULE 2: INTENSITY-FREQUENCY-DURATION (IFD)
+# ==========================================
+elif "IFD" in app_mode:
+    st.markdown("Retrieve 2016 ARR IFD design rainfalls directly from the Bureau of Meteorology.")
     
-    col1, col2 = st.columns(2)
-    with col1:
-        maf_input = st.number_input("Moisture Adjustment Factor (MAF) from BoM Figure 3:", min_value=0.0, max_value=2.0, value=1.0)
-        elev_input = st.number_input("Mean Elevation (m)", min_value=0, value=500)
-    with col2:
-        r_percent = st.slider("Percentage of ROUGH terrain (%)", 0, 100, 0) / 100
+    st.markdown("### 1. Define Location")
+    ifd_input_method = st.radio("Select location method:", 
+        ["Manual Coordinate Entry (Lat/Lon)", "Use Catchment Centroid from GIS"], 
+        horizontal=True, key="ifd_radio")
         
-    if st.button("Calculate Short-Duration PMP", type="primary"):
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        status_text.write("⏳ Fetching catchment geometry...")
+    if "Manual" in ifd_input_method:
+        col1, col2 = st.columns(2)
+        ifd_lat = col1.number_input("Latitude (e.g., -33.8688)", value=-33.8688, format="%.5f")
+        ifd_lon = col2.number_input("Longitude (e.g., 151.2093)", value=151.2093, format="%.5f")
+    else:
+        st.info("Upload a spatial file or enter a Geofabric ID to automatically extract the centroid coordinates.")
+        ifd_uploaded_file = st.file_uploader("Upload Geometry", type=['geojson', 'zip'], key="ifd_upload")
         
-        try:
-            if "Sub-Catchment" in input_method:
-                if not catchment_id_input: raise ValueError("Please enter a Catchment ID.")
-                catchment_gdf = fetch_catchment_from_geofabric(catchment_id_input, "AHGFCatchment")
-            elif "Drainage Basin" in input_method:
-                if not catchment_id_input: raise ValueError("Please enter a Basin ID.")
-                catchment_gdf = fetch_catchment_from_geofabric(catchment_id_input, "NCBLevel2DrainageBasinGroup")
-            else:
-                if not uploaded_file: raise ValueError("Please upload a file.")
-                catchment_gdf = load_custom_catchment(uploaded_file)
-
-            progress_bar.progress(30)
-            status_text.write("⏳ Calculating area and applying elevation factors...")
-            area_km2 = catchment_gdf.to_crs(epsg=3577).geometry.area.sum() / 1e6
-            eaf_value = 1.0 if elev_input <= 1500 else 1.0 - (((elev_input - 1500) / 300) * 0.05)
-            s_percent = 1.0 - r_percent
-            target_log_area = np.log10(max(1.0, min(area_km2, 1000.0)))
-            log_areas = np.log10(gsdm_smooth_df.index)
-            
-            progress_bar.progress(70)
-            status_text.write("⏳ Interpolating GSDM depth-duration curves...")
-            final_gsdm = {}
-            for dur in GSDM_DURATIONS:
-                ds_val = float(interp1d(log_areas, gsdm_smooth_df[dur], kind='linear', fill_value='extrapolate')(target_log_area))
-                dr_val = float(interp1d(log_areas, gsdm_rough_df[dur], kind='linear', fill_value='extrapolate')(target_log_area))
-                final_gsdm[f"{dur} Hours"] = round((s_percent * ds_val + r_percent * dr_val) * maf_input * eaf_value, 1)
-            
-            progress_bar.progress(100)
-            status_text.write("⏳ Finalizing results...")
-            
-            st.session_state.gsdm_results = {
-                "final_gsdm": final_gsdm, "catchment": catchment_gdf, "area_km2": area_km2, 
-                "maf_input": maf_input, "eaf_value": eaf_value, "r_percent": r_percent, "catchment_id": cid_display
-            }
-            
-            # Hide the progress bar once complete
-            progress_bar.empty()
-            status_text.empty()
-        except Exception as e:
-            st.error(f"Error: {e}")
-            st.session_state.gsdm_results = None
-
-    if st.session_state.gsdm_results is not None:
-        res = st.session_state.gsdm_results
-        cid = res["catchment_id"]
-        area_km2 = res["area_km2"]
-        final_gsdm = res["final_gsdm"]
-        
-        if area_km2 > 1000:
-            st.warning(f"Catchment area ({area_km2:.2f} km²) exceeds the 1,000 km² limit for GSDM. Results may not be valid.")
-            
-        st.success("Calculation Complete!")
-        st.metric("Catchment Area", f"{area_km2:.2f} km²")
-        df_gsdm = pd.DataFrame(list(final_gsdm.items()), columns=['Duration', 'Depth (mm)'])
-        
-        col_table, col_chart = st.columns([1, 2])
-        with col_table:
-            st.table(df_gsdm)
-            
-        with col_chart:
-            # Prepare numeric data and hover metadata for Plotly
-            df_gsdm['Duration (hrs)'] = df_gsdm['Duration'].str.replace(' Hours', '').astype(float)
-            df_gsdm['MAF Applied'] = res['maf_input']
-            df_gsdm['EAF Applied'] = round(res['eaf_value'], 3)
-            df_gsdm['Rough Terrain (%)'] = res['r_percent'] * 100
-            
-            log_toggle_short = st.checkbox("Logarithmic X-Axis (Duration)", value=False, key="log_short")
-            
-            fig = px.line(
-                df_gsdm, 
-                x='Duration (hrs)', 
-                y='Depth (mm)', 
-                markers=True, 
-                title="Short-Duration PMP Curve",
-                hover_data={
-                    'Duration (hrs)': True, 
-                    'Depth (mm)': True, 
-                    'Duration': False, 
-                    'MAF Applied': True, 
-                    'EAF Applied': True, 
-                    'Rough Terrain (%)': True
-                }
-            )
-            fig.update_traces(line_color='#ef4444', marker=dict(size=8))
-            
-            if log_toggle_short:
-                fig.update_layout(xaxis_type='log')
-                
-            st.plotly_chart(fig, use_container_width=True)
-        
-        st.markdown("### Catchment Location")
-        catchment_geo = res["catchment"]
-        m = create_interactive_map(catchment_geo)
-        st_folium(m, width=720, height=400, returned_objects=[], key="map_short")
-        
-        st.markdown("### 📥 Export Results")
-        col_csv, col_gis, col_pdf, col_swmm = st.columns(4)
-        
-        csv_data = create_csv(final_gsdm)
-        col_csv.download_button("Download CSV", data=csv_data, file_name=f"GSDM_{cid}.csv", mime="text/csv", key="gsdm_csv")
-        
-        meta_dict = {"Area_km2": round(area_km2, 2), "MAF_Input": res["maf_input"], "EAF": round(res["eaf_value"], 3), "Rough_Pct": res["r_percent"] * 100}
-        geojson_data = create_geojson(res["catchment"], meta_dict, final_gsdm)
-        col_gis.download_button("Download GIS", data=geojson_data, file_name=f"Catchment_{cid}.geojson", mime="application/geo+json", key="gsdm_gis")
-        
-        pdf_data = create_pdf(cid, "Short-Duration PMP (GSDM)", meta_dict, final_gsdm)
-        col_pdf.download_button("Download PDF", data=pdf_data, file_name=f"GSDM_Report_{cid}.pdf", mime="application/pdf", key="gsdm_pdf")
-        
-        # New SWMM / 12d Export
-        swmm_data = create_swmm_timeseries(cid, "Short-Duration PMP (GSDM)", final_gsdm)
-        col_swmm.download_button("Download SWMM/12d", data=swmm_data, file_name=f"GSDM_Curve_{cid}.dat", mime="text/plain", key="gsdm_swmm")
+    st.markdown("### 2. Fetch IFD Data")
+    if st.button("Download IFD Data from BoM", type="primary"):
+        st.warning("Data fetching logic will be added in Step 2!")
