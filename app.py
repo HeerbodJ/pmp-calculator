@@ -427,12 +427,27 @@ if "long_pmp_results" not in st.session_state:
     st.session_state.long_pmp_results = None
 if "gsdm_results" not in st.session_state:
     st.session_state.gsdm_results = None
+    
+# Initialize EPW defaults in memory
+if "gsam_epw" not in st.session_state:
+    st.session_state.gsam_epw = 56.7
+if "gtsmr_epw" not in st.session_state:
+    st.session_state.gtsmr_epw = 73.0
+
+# Callback function to reset EPW values
+def reset_epw_defaults():
+    st.session_state.gsam_epw = 56.7
+    st.session_state.gtsmr_epw = 73.0
 
 with st.sidebar:
     st.markdown("### ⚙️ Engineering Parameters")
     st.write("Adjust standard EPW values for sensitivity testing:")
-    gsam_epw_input = st.number_input("GSAM Standard EPW", value=56.7, step=0.1)
-    gtsmr_epw_input = st.number_input("GTSMR Standard EPW", value=73.0, step=0.1)
+    
+    # Tie the inputs directly to the session state keys
+    gsam_epw_input = st.number_input("GSAM Standard EPW", key="gsam_epw", step=0.1)
+    gtsmr_epw_input = st.number_input("GTSMR Standard EPW", key="gtsmr_epw", step=0.1)
+    
+    st.button("↺ Reset EPW Defaults", on_click=reset_epw_defaults)
     
     st.markdown("---")
     st.markdown("### 📊 System Diagnostics")
@@ -446,7 +461,9 @@ with st.sidebar:
         st.cache_resource.clear()
         st.session_state.long_pmp_results = None
         st.session_state.gsdm_results = None
+        reset_epw_defaults()
         st.rerun()
+
 st.title("PMP Calculator")
 st.markdown("Calculate GSAM, GTSMR, and GSDM instantly.")
 
