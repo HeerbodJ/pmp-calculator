@@ -323,7 +323,13 @@ def create_interactive_map(catchment_geo):
     return m
 
 # --- 4. CALCULATION FUNCTIONS ---
-def calculate_automated_pmp(catchment):
+def calculate_automated_pmp(catchment, progress_bar=None, status_text=None):
+    def update_status(val, text):
+        if progress_bar is not None and status_text is not None:
+            progress_bar.progress(val)
+            status_text.write(f"⏳ {text}")
+
+    update_status(10, "Extracting catchment geometry and calculating area...")
     if not MASTER_PMP_ZONES_SHP:
         raise FileNotFoundError("Master PMP Zones shapefile is missing. Check System Diagnostics.")
         
@@ -331,6 +337,7 @@ def calculate_automated_pmp(catchment):
     area_km2 = catchment_albers.geometry.area.sum() / 1e6
     catchment_centroid = catchment_albers.geometry.centroid.iloc[0]
     
+    update_status(30, "Intersecting catchment with Master PMP Zones...")
     master_zones = gpd.read_file(MASTER_PMP_ZONES_SHP)
     if master_zones.crs is None:
         master_zones.set_crs(epsg=4283, inplace=True)
@@ -355,11 +362,13 @@ def calculate_automated_pmp(catchment):
     else:
         raise NotImplementedError("Transition zones require manual dual-method weighting.")
 
+    update_status(50, f"Zone identified as {full_zone_name}. Extracting Moisture Adjustment Factor (MAF)...")
     with rasterio.open(maf_grid_path) as src:
         raster_crs = src.crs if src.crs else "EPSG:4283"
         geom = catchment.to_crs(raster_crs).geometry.iloc[0].__geo_interface__
     maf_value = get_catchment_average(maf_grid_path, geom) / standard_epw
 
+    update_status(75, "Extracting Topographic Adjustment Factor (TAF)...")
     if topo_grid_path and Path(topo_grid_path).exists():
         with rasterio.open(topo_grid_path) as src:
             topo_crs = src.crs if src.crs else "EPSG:4283"
@@ -368,6 +377,7 @@ def calculate_automated_pmp(catchment):
     else:
         topo_value = 1.0
     
+    update_status(85, "Reading Depth-Area-Duration (DAD) tables...")
     dad_table_path = find_dad_file_in_cd(cd_root, full_zone_name)
     raw_df = pd.read_csv(dad_table_path, header=None) if dad_table_path.suffix.lower() == '.csv' else pd.read_excel(dad_table_path, header=None)
         
@@ -382,11 +392,13 @@ def calculate_automated_pmp(catchment):
     dad_df.columns = [c.replace('h', '') if isinstance(c, str) else c for c in dad_df.columns]
     dad_df = dad_df.apply(pd.to_numeric, errors='coerce').dropna(subset=['Area_km2'])
     
+    update_status(95, "Interpolating final PMP depths...")
     final_pmp = {}
     for duration in [col for col in dad_df.columns if col != 'Area_km2']:
         f_interp = interp1d(dad_df['Area_km2'], dad_df[duration], kind='linear', fill_value='extrapolate')
         final_pmp[f"{duration} Hours"] = round(float(f_interp(area_km2)) * maf_value * topo_value, 1)
         
+    update_status(100, "Calculation complete!")
     return {
         "Area (km2)": round(area_km2, 2), 
         "Zone": full_zone_name, 
@@ -396,7 +408,6 @@ def calculate_automated_pmp(catchment):
         "PMP (mm)": final_pmp,
         "Catchment_Geo": catchment
     }
-
 # --- 5. STREAMLIT WEB INTERFACE ---
 st.set_page_config(page_title="PMP Calculator", layout="wide")
 
@@ -463,23 +474,30 @@ tab_long, tab_short = st.tabs(["Long-Duration PMP (GSAM / GTSMR)", "Short-Durati
 
 with tab_long:
     if st.button("Calculate Long-Duration PMP", type="primary"):
-        with st.spinner("Processing geospatial data..."):
-            try:
-                if "Sub-Catchment" in input_method:
-                    if not catchment_id_input: raise ValueError("Please enter a Catchment ID.")
-                    catchment_gdf = fetch_catchment_from_geofabric(catchment_id_input, "AHGFCatchment")
-                elif "Drainage Basin" in input_method:
-                    if not catchment_id_input: raise ValueError("Please enter a Basin ID.")
-                    catchment_gdf = fetch_catchment_from_geofabric(catchment_id_input, "NCBLevel2DrainageBasinGroup")
-                else:
-                    if not uploaded_file: raise ValueError("Please upload a file.")
-                    catchment_gdf = load_custom_catchment(uploaded_file)
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        status_text.write("⏳ Initializing spatial engine...")
+        
+        try:
+            if "Sub-Catchment" in input_method:
+                if not catchment_id_input: raise ValueError("Please enter a Catchment ID.")
+                catchment_gdf = fetch_catchment_from_geofabric(catchment_id_input, "AHGFCatchment")
+            elif "Drainage Basin" in input_method:
+                if not catchment_id_input: raise ValueError("Please enter a Basin ID.")
+                catchment_gdf = fetch_catchment_from_geofabric(catchment_id_input, "NCBLevel2DrainageBasinGroup")
+            else:
+                if not uploaded_file: raise ValueError("Please upload a file.")
+                catchment_gdf = load_custom_catchment(uploaded_file)
 
-                res = calculate_automated_pmp(catchment_gdf)
-                st.session_state.long_pmp_results = {"results": res, "catchment_id": cid_display}
-            except Exception as e:
-                st.error(f"Error: {e}")
-                st.session_state.long_pmp_results = None
+            res = calculate_automated_pmp(catchment_gdf, progress_bar, status_text)
+            st.session_state.long_pmp_results = {"results": res, "catchment_id": cid_display}
+            
+            # Hide the progress bar once complete
+            progress_bar.empty()
+            status_text.empty()
+        except Exception as e:
+            st.error(f"Error: {e}")
+            st.session_state.long_pmp_results = None
 
     if st.session_state.long_pmp_results is not None:
         results = st.session_state.long_pmp_results["results"]
@@ -564,37 +582,51 @@ with tab_short:
         r_percent = st.slider("Percentage of ROUGH terrain (%)", 0, 100, 0) / 100
         
     if st.button("Calculate Short-Duration PMP", type="primary"):
-        with st.spinner("Processing GSDM..."):
-            try:
-                if "Sub-Catchment" in input_method:
-                    if not catchment_id_input: raise ValueError("Please enter a Catchment ID.")
-                    catchment_gdf = fetch_catchment_from_geofabric(catchment_id_input, "AHGFCatchment")
-                elif "Drainage Basin" in input_method:
-                    if not catchment_id_input: raise ValueError("Please enter a Basin ID.")
-                    catchment_gdf = fetch_catchment_from_geofabric(catchment_id_input, "NCBLevel2DrainageBasinGroup")
-                else:
-                    if not uploaded_file: raise ValueError("Please upload a file.")
-                    catchment_gdf = load_custom_catchment(uploaded_file)
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        status_text.write("⏳ Fetching catchment geometry...")
+        
+        try:
+            if "Sub-Catchment" in input_method:
+                if not catchment_id_input: raise ValueError("Please enter a Catchment ID.")
+                catchment_gdf = fetch_catchment_from_geofabric(catchment_id_input, "AHGFCatchment")
+            elif "Drainage Basin" in input_method:
+                if not catchment_id_input: raise ValueError("Please enter a Basin ID.")
+                catchment_gdf = fetch_catchment_from_geofabric(catchment_id_input, "NCBLevel2DrainageBasinGroup")
+            else:
+                if not uploaded_file: raise ValueError("Please upload a file.")
+                catchment_gdf = load_custom_catchment(uploaded_file)
 
-                area_km2 = catchment_gdf.to_crs(epsg=3577).geometry.area.sum() / 1e6
-                eaf_value = 1.0 if elev_input <= 1500 else 1.0 - (((elev_input - 1500) / 300) * 0.05)
-                s_percent = 1.0 - r_percent
-                target_log_area = np.log10(max(1.0, min(area_km2, 1000.0)))
-                log_areas = np.log10(gsdm_smooth_df.index)
-                
-                final_gsdm = {}
-                for dur in GSDM_DURATIONS:
-                    ds_val = float(interp1d(log_areas, gsdm_smooth_df[dur], kind='linear', fill_value='extrapolate')(target_log_area))
-                    dr_val = float(interp1d(log_areas, gsdm_rough_df[dur], kind='linear', fill_value='extrapolate')(target_log_area))
-                    final_gsdm[f"{dur} Hours"] = round((s_percent * ds_val + r_percent * dr_val) * maf_input * eaf_value, 1)
-                
-                st.session_state.gsdm_results = {
-                    "final_gsdm": final_gsdm, "catchment": catchment_gdf, "area_km2": area_km2, 
-                    "maf_input": maf_input, "eaf_value": eaf_value, "r_percent": r_percent, "catchment_id": cid_display
-                }
-            except Exception as e:
-                st.error(f"Error: {e}")
-                st.session_state.gsdm_results = None
+            progress_bar.progress(30)
+            status_text.write("⏳ Calculating area and applying elevation factors...")
+            area_km2 = catchment_gdf.to_crs(epsg=3577).geometry.area.sum() / 1e6
+            eaf_value = 1.0 if elev_input <= 1500 else 1.0 - (((elev_input - 1500) / 300) * 0.05)
+            s_percent = 1.0 - r_percent
+            target_log_area = np.log10(max(1.0, min(area_km2, 1000.0)))
+            log_areas = np.log10(gsdm_smooth_df.index)
+            
+            progress_bar.progress(70)
+            status_text.write("⏳ Interpolating GSDM depth-duration curves...")
+            final_gsdm = {}
+            for dur in GSDM_DURATIONS:
+                ds_val = float(interp1d(log_areas, gsdm_smooth_df[dur], kind='linear', fill_value='extrapolate')(target_log_area))
+                dr_val = float(interp1d(log_areas, gsdm_rough_df[dur], kind='linear', fill_value='extrapolate')(target_log_area))
+                final_gsdm[f"{dur} Hours"] = round((s_percent * ds_val + r_percent * dr_val) * maf_input * eaf_value, 1)
+            
+            progress_bar.progress(100)
+            status_text.write("⏳ Finalizing results...")
+            
+            st.session_state.gsdm_results = {
+                "final_gsdm": final_gsdm, "catchment": catchment_gdf, "area_km2": area_km2, 
+                "maf_input": maf_input, "eaf_value": eaf_value, "r_percent": r_percent, "catchment_id": cid_display
+            }
+            
+            # Hide the progress bar once complete
+            progress_bar.empty()
+            status_text.empty()
+        except Exception as e:
+            st.error(f"Error: {e}")
+            st.session_state.gsdm_results = None
 
     if st.session_state.gsdm_results is not None:
         res = st.session_state.gsdm_results
