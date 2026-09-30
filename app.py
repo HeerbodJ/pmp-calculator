@@ -837,13 +837,49 @@ elif "IFD" in app_mode:
         st.success("IFD Data successfully retrieved!")
         st.write(f"**Coordinates:** {res['lat']}, {res['lon']}")
         
-        # Display the raw dataframe
-        st.dataframe(res['df'], use_container_width=True)
-        
-        # Add a quick download button for the original BoM CSV
         st.download_button(
             label="Download Original BoM CSV", 
             data=res['raw_csv'].encode('utf-8'), 
             file_name=f"IFD_{res['lat']}_{res['lon']}.csv", 
             mime="text/csv"
         )
+        
+        # Prepare data for plotting
+        plot_df = res['df'].copy()
+        
+        # Convert BoM text durations ("5 min", "1 hour", "3 day") into uniform numeric hours
+        def duration_to_hours(d):
+            d = str(d).lower()
+            if 'min' in d: return float(re.sub(r'[^0-9.]', '', d)) / 60.0
+            if 'hour' in d: return float(re.sub(r'[^0-9.]', '', d))
+            if 'day' in d: return float(re.sub(r'[^0-9.]', '', d)) * 24.0
+            return 0.0
+            
+        plot_df['Duration (hrs)'] = plot_df['Duration'].apply(duration_to_hours)
+        
+        # Identify all AEP columns to plot (everything except the duration columns)
+        aep_cols = [c for c in plot_df.columns if c not in ['Duration', 'Duration (hrs)']]
+        
+        col_table, col_chart = st.columns([1, 2])
+        with col_table:
+            # Display the clean table
+            st.dataframe(res['df'], use_container_width=True, hide_index=True)
+            
+        with col_chart:
+            # Default to True for IFD since it spans from minutes to days
+            log_toggle_ifd = st.checkbox("Logarithmic X-Axis (Duration)", value=True, key="log_ifd")
+            
+            fig = px.line(
+                plot_df, 
+                x='Duration (hrs)', 
+                y=aep_cols, 
+                markers=True, 
+                title="Intensity-Frequency-Duration (IFD) Curves",
+                labels={'value': 'Rainfall Depth (mm)', 'variable': 'Annual Exceedance Probability (AEP)'}
+            )
+            fig.update_traces(marker=dict(size=6))
+            
+            if log_toggle_ifd:
+                fig.update_layout(xaxis_type='log')
+                
+            st.plotly_chart(fig, use_container_width=True)
