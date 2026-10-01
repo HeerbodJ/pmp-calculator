@@ -456,7 +456,7 @@ def calculate_automated_pmp(catchment, progress_bar=None, status_text=None, cust
     }
 
 # --- 5. STREAMLIT WEB INTERFACE ---
-st.set_page_config(page_title="PMP Calculator", layout="wide")
+st.set_page_config(page_title="IDF & PMP Calculator", layout="wide")
 
 hide_st_style = """
             <style>
@@ -514,7 +514,7 @@ with st.sidebar:
         reset_epw_defaults()
         st.rerun()
 
-st.title("Design Rainfall & PMP Dashboard")
+st.title("Australian IDF & PMP Dashboard")
 
 # ==========================================
 # MODULE 1: PROBABLE MAXIMUM PRECIPITATION
