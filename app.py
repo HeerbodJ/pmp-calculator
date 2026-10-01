@@ -776,6 +776,11 @@ elif "IFD" in app_mode:
         st.info("Click anywhere on the map to lock in your coordinates.")
         m_ifd = folium.Map(location=[-25.2744, 133.7751], zoom_start=4)
         m_ifd.add_child(folium.LatLngPopup())
+        
+        # Inject custom CSS to change the cursor from a panning hand to a precise crosshair
+        cursor_css = "<style>.leaflet-container { cursor: crosshair !important; }</style>"
+        m_ifd.get_root().html.add_child(folium.Element(cursor_css))
+        
         map_data = st_folium(m_ifd, height=400, width=720, key="ifd_map_select")
         
         if map_data and map_data.get("last_clicked"):
