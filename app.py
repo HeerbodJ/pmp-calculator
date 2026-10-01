@@ -774,7 +774,6 @@ elif "IFD" in app_mode:
         
     elif "Map" in ifd_input_method:
         st.info("Click anywhere on the map to lock in your coordinates.")
-        # Generate an interactive map centered on Australia
         m_ifd = folium.Map(location=[-25.2744, 133.7751], zoom_start=4)
         m_ifd.add_child(folium.LatLngPopup())
         map_data = st_folium(m_ifd, height=400, width=720, key="ifd_map_select")
@@ -805,10 +804,9 @@ elif "IFD" in app_mode:
             ifd_uploaded_file = st.file_uploader("Upload Geometry", type=['geojson', 'zip'], key="ifd_upload")
         
     st.markdown("### 2. Fetch IFD Data")
-    if st.button("Download IFD Data from BoM", type="primary"):
+    if st.button("Download IFD Data from BoM", type="primary", key="ifd_download_btn"):
         with st.spinner("Fetching data from the Bureau of Meteorology..."):
             try:
-                # 1. Determine Coordinates
                 if "Manual" in ifd_input_method:
                     target_lat = ifd_lat
                     target_lon = ifd_lon
@@ -828,17 +826,14 @@ elif "IFD" in app_mode:
                         if not ifd_uploaded_file: raise ValueError("Please upload a spatial file to extract the centroid.")
                         catchment_gdf = load_custom_catchment(ifd_uploaded_file)
                         
-                    # Convert to WGS84 (Lat/Lon) to ensure correct API coordinates
                     catchment_wgs84 = catchment_gdf.to_crs(epsg=4326)
                     centroid = catchment_wgs84.geometry.iloc[0].centroid
                     target_lat = round(centroid.y, 5)
                     target_lon = round(centroid.x, 5)
                     st.info(f"📍 Extracted Centroid: Latitude {target_lat}, Longitude {target_lon}")
 
-                # 2. Fetch the Data
                 ifd_df, raw_csv_text = fetch_bom_ifd(target_lat, target_lon)
                 
-                # Save to session state so it persists on the screen
                 st.session_state.ifd_results = {
                     "df": ifd_df, 
                     "raw_csv": raw_csv_text, 
@@ -861,15 +856,14 @@ elif "IFD" in app_mode:
             label="Download Original BoM CSV", 
             data=res['raw_csv'].encode('utf-8'), 
             file_name=f"IFD_{res['lat']}_{res['lon']}.csv", 
-            mime="text/csv"
+            mime="text/csv",
+            key="ifd_csv_download"
         )
         
-        # Prepare data for plotting - Drop blank rows AND filter out "factor" metadata rows
         clean_df = res['df'].dropna(subset=[res['df'].columns[1]]).copy()
         clean_df = clean_df[~clean_df['Duration'].astype(str).str.lower().str.contains('factor')]
         plot_df = clean_df.copy()
         
-        # Convert BoM text durations ("5 min", "1 hour", "3 day") into uniform numeric hours
         def duration_to_hours(d):
             d = str(d).lower()
             if 'min' in d: return float(re.sub(r'[^0-9.]', '', d)) / 60.0
@@ -879,24 +873,19 @@ elif "IFD" in app_mode:
             
         plot_df['Duration (hrs)'] = plot_df['Duration'].apply(duration_to_hours)
         
-        # Identify all AEP columns to plot (everything except the duration columns)
         aep_cols = [c for c in plot_df.columns if c not in ['Duration', 'Duration (hrs)']]
         
-        # Force all AEP columns to numeric to prevent Plotly mixed-type errors
         for col in aep_cols:
             plot_df[col] = pd.to_numeric(plot_df[col], errors='coerce')
             
-        # Drop any remaining NaN rows that might break the chart
         plot_df = plot_df.dropna(subset=aep_cols, how='all')
         
         col_table, col_chart = st.columns([1, 2])
         with col_table:
-            # Display the clean table without the winter factors
             st.dataframe(clean_df, use_container_width=True, hide_index=True)
             
         with col_chart:
-            # Default to True for IFD since it spans from minutes to days
-            log_toggle_ifd = st.checkbox("Logarithmic X-Axis (Duration)", value=True, key="log_ifd")
+            log_toggle_ifd = st.checkbox("Logarithmic X-Axis (Duration)", value=True, key="log_ifd_chart")
             
             fig = px.line(
                 plot_df, 
@@ -911,6 +900,6 @@ elif "IFD" in app_mode:
             if log_toggle_ifd:
                 fig.update_layout(xaxis_type='log')
                 
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True, key="ifd_final_plot")
                 
             st.plotly_chart(fig, use_container_width=True)
