@@ -864,8 +864,9 @@ elif "IFD" in app_mode:
             mime="text/csv"
         )
         
-        # Prepare data for plotting
+        # Prepare data for plotting - Drop blank rows AND filter out "factor" metadata rows
         clean_df = res['df'].dropna(subset=[res['df'].columns[1]]).copy()
+        clean_df = clean_df[~clean_df['Duration'].astype(str).str.lower().str.contains('factor')]
         plot_df = clean_df.copy()
         
         # Convert BoM text durations ("5 min", "1 hour", "3 day") into uniform numeric hours
@@ -881,13 +882,16 @@ elif "IFD" in app_mode:
         # Identify all AEP columns to plot (everything except the duration columns)
         aep_cols = [c for c in plot_df.columns if c not in ['Duration', 'Duration (hrs)']]
         
-        # FIX: Force all AEP columns to numeric to prevent Plotly mixed-type errors
+        # Force all AEP columns to numeric to prevent Plotly mixed-type errors
         for col in aep_cols:
             plot_df[col] = pd.to_numeric(plot_df[col], errors='coerce')
+            
+        # Drop any remaining NaN rows that might break the chart
+        plot_df = plot_df.dropna(subset=aep_cols, how='all')
         
         col_table, col_chart = st.columns([1, 2])
         with col_table:
-            # Display the clean table
+            # Display the clean table without the winter factors
             st.dataframe(clean_df, use_container_width=True, hide_index=True)
             
         with col_chart:
