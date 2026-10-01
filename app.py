@@ -902,4 +902,3 @@ elif "IFD" in app_mode:
                 
             st.plotly_chart(fig, use_container_width=True, key="ifd_final_plot")
                 
-            st.plotly_chart(fig, use_container_width=True)
